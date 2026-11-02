@@ -2153,6 +2153,15 @@ class RepeaterHandler(BaseHandler):
                 uncertain = isinstance(metadata, dict) and metadata.get("tx_outcome_uncertain")
                 if token and not uncertain:
                     self.bridge_echoes.finish(token, success=success)
+                callback = getattr(self, "bridge_egress_callback", None)
+                if success and send.crossing and callback is not None:
+                    try:
+                        await callback(pkt, source, radio_id)
+                    except Exception:
+                        # A local observer failure cannot undo a confirmed radio send.
+                        logger.exception(
+                            "Confirmed bridge egress could not reach companion observers"
+                        )
                 return RadioTxResult(
                     radio_id,
                     success,

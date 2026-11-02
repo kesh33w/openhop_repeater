@@ -195,3 +195,20 @@ def test_actual_outgoing_bytes_persist_and_old_schema_migrates(tmp_path):
         assert db.execute(
             "SELECT raw_packet, failure_reason, success FROM packet_egress"
         ).fetchone() == ("010203", "unconfirmed", 0)
+
+@pytest.mark.asyncio
+async def test_confirmed_crossing_observer_is_not_local_repeat_and_cannot_change_tx_success(rig_factory):
+    rig = rig_factory()
+    observer = AsyncMock(side_effect=RuntimeError('local observer unavailable'))
+    rig.handler.bridge_egress_callback = observer
+    assert await rig.handler(packet(), fabric_tests._rx('local'))
+    assert observer.await_count == 1
+    assert observer.call_args.args[2] == 'link'
+    assert rig.air.order == ['local', 'link']
+
+@pytest.mark.asyncio
+async def test_denied_crossing_has_no_destination_companion_observation(rig_factory):
+    rig=rig_factory(crossing_policy={'enabled':True,'default_action':'drop'})
+    rig.handler.bridge_egress_callback=AsyncMock()
+    assert await rig.handler(packet(),fabric_tests._rx('local'))
+    rig.handler.bridge_egress_callback.assert_not_called()

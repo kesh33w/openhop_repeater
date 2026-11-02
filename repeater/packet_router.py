@@ -1,4 +1,5 @@
 import asyncio
+import copy
 import logging
 import time
 
@@ -324,7 +325,39 @@ class PacketRouter:
                 for key, bridge in companion_bridges.items()
                 if not (isinstance(key, int) and f"0x{key:02x}" == origin_hash)
             }
-        return companion_bridges
+        radio_id = metadata.get("rx_radio_id") or metadata.get("home_radio_id")
+        return {
+            key: bridge
+            for key, bridge in companion_bridges.items()
+            if not isinstance(getattr(bridge, "_receive_radio_ids", None), frozenset)
+            or radio_id in bridge._receive_radio_ids
+        }
+
+    async def deliver_bridge_egress(self, packet, source, radio_id):
+        """Deliver a confirmed crossing to opted-in destination feeds, without retransmission."""
+        received = copy.copy(packet)
+        received._rssi = 0
+        received._snr = 0
+        received._rx_radio_id = radio_id
+        received._injected_origin_hash = getattr(source, "_injected_origin_hash", None)
+        metadata = {"rx_radio_id": radio_id}
+        bridges = {
+            key: bridge
+            for key, bridge in self._companion_bridges_for_packet(received, metadata).items()
+            if isinstance(getattr(bridge, "_receive_radio_ids", None), frozenset)
+        }
+        if not bridges:
+            return
+        # This is local egress observation, not an independent RF reception.
+        await self.daemon._on_raw_rx_for_companions(
+            received.write_to(),
+            0,
+            0.0,
+            exclude_hash=getattr(source, "_injected_origin_hash", None),
+            rx_radio_id=radio_id,
+            filtered_only=True,
+        )
+        await self._fan_out_to_bridges(received, bridges, context="bridge egress")
 
     async def _fan_out_to_bridges(self, packet, bridges, *, context: str) -> tuple:
         """Offer packet to each bridge; report ``(delivered, authenticated)``.
@@ -485,7 +518,12 @@ class PacketRouter:
             if push_rx is not None:
                 try:
                     raw = packet.write_to()
-                    await push_rx(raw, 0, 0.0, exclude_hash=origin_hash)
+                    if home_radio_id is not None:
+                        await push_rx(
+                            raw, 0, 0.0, exclude_hash=origin_hash, rx_radio_id=home_radio_id
+                        )
+                    else:
+                        await push_rx(raw, 0, 0.0, exclude_hash=origin_hash)
                     servers = getattr(self.daemon, "companion_frame_servers", [])
                     pushed = sum(
                         1 for fs in servers if getattr(fs, "companion_hash", None) != origin_hash

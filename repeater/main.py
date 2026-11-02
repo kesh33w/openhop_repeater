@@ -556,6 +556,7 @@ class RepeaterDaemon:
 
             # Create router
             self.router = PacketRouter(self)
+            self.repeater_handler.bridge_egress_callback = self.router.deliver_bridge_egress
             await self.router.start()
 
             # Register router as entry point for ALL packets via fallback handler
@@ -849,7 +850,7 @@ class RepeaterDaemon:
         total_identities = len(self.identity_manager.list_identities())
         logger.info(f"Identity manager loaded {total_identities} total identities")
 
-    def _get_companion_radio_settings(self) -> dict:
+    def _get_companion_radio_settings(self, home_radio_id=None) -> dict:
         """Return the current repeater radio settings for virtual companions.
 
         The values are read-only to companion sessions.  Prefer attributes of
@@ -863,6 +864,16 @@ class RepeaterDaemon:
         )
         settings = dict(config) if isinstance(config, dict) else {}
         radio = self.radio
+        if home_radio_id is not None:
+            entries = {
+                entry.get("id", entry.get("radio_id")): entry
+                for entry in self.config.get("radios", [])
+            }
+            if home_radio_id not in entries:
+                raise ValueError("Unknown companion home radio")
+            settings.update(entries[home_radio_id].get("radio", {}))
+            fabric = getattr(self.radio, "fabric", None)
+            radio = getattr(fabric, "radios", {}).get(home_radio_id)
         if radio is None:
             return settings
 
@@ -878,7 +889,7 @@ class RepeaterDaemon:
                 settings[config_key] = value
         return settings
 
-    def _get_companion_max_tx_power_dbm(self):
+    def _get_companion_max_tx_power_dbm(self, home_radio_id=None):
         """Return the active backend's TX limit when it declares one.
 
         The backend can expose a ``get_max_tx_power_dbm`` method, a
@@ -886,7 +897,30 @@ class RepeaterDaemon:
         driver limit this way), or a validated deployment setting.
         Returning ``None`` lets Core use its generic protocol fallback.
         """
-        return resolve_max_tx_power_dbm(self.radio, self._get_companion_radio_settings())
+        radio = self.radio
+        if home_radio_id is not None:
+            radio = getattr(getattr(self.radio, "fabric", None), "radios", {}).get(home_radio_id)
+        return resolve_max_tx_power_dbm(radio, self._get_companion_radio_settings(home_radio_id))
+
+    def _configure_companion_routing(self, bridge, settings):
+        home = settings.get("home_radio_id")
+        if home is not None:
+            self._get_companion_radio_settings(
+                home
+            )  # Reject an unknown home, never silently default.
+        receive = settings.get("receive_radio_ids")
+        if receive is not None:
+            known = {
+                entry.get("id", entry.get("radio_id")) for entry in self.config.get("radios", [])
+            }
+            if (
+                not isinstance(receive, list)
+                or not receive
+                or any(not isinstance(r, str) or r not in known for r in receive)
+            ):
+                raise ValueError("Companion receive_radio_ids must name configured radios")
+            receive = frozenset(receive)
+        bridge._receive_radio_ids = receive
 
     async def _load_companion_identities(self) -> None:
         """Load companion identities from config and create CompanionBridge + frame server for each."""
@@ -982,13 +1016,19 @@ class RepeaterDaemon:
                     ),
                     node_name=node_name,
                     radio_config=radio_config,
-                    radio_settings_getter=self._get_companion_radio_settings,
-                    max_tx_power_getter=self._get_companion_max_tx_power_dbm,
+                    radio_settings_getter=functools.partial(
+                        self._get_companion_radio_settings, settings.get("home_radio_id")
+                    ),
+                    max_tx_power_getter=functools.partial(
+                        self._get_companion_max_tx_power_dbm, settings.get("home_radio_id")
+                    ),
                     sqlite_handler=sqlite_handler,
                     companion_hash=companion_hash_str,
                     on_prefs_saved=_make_sync_node_name_to_config(name),
                     **bridge_kwargs,
                 )
+
+                self._configure_companion_routing(bridge, settings)
 
                 # Share the dispatcher's served-region map so this bridge re-scopes
                 # its own flood replies to the region the request arrived under.
@@ -1234,12 +1274,18 @@ class RepeaterDaemon:
             ),
             node_name=node_name,
             radio_config=radio_config,
-            radio_settings_getter=self._get_companion_radio_settings,
-            max_tx_power_getter=self._get_companion_max_tx_power_dbm,
+            radio_settings_getter=functools.partial(
+                self._get_companion_radio_settings, settings.get("home_radio_id")
+            ),
+            max_tx_power_getter=functools.partial(
+                self._get_companion_max_tx_power_dbm, settings.get("home_radio_id")
+            ),
             sqlite_handler=sqlite_handler,
             companion_hash=companion_hash_str,
             **bridge_kwargs,
         )
+
+        self._configure_companion_routing(bridge, settings)
 
         # Share the current served-region map (hot-reload path) so this bridge
         # re-scopes its flood replies to the region the request arrived under.
@@ -1298,7 +1344,14 @@ class RepeaterDaemon:
         )
 
     async def _on_raw_rx_for_companions(
-        self, data: bytes, rssi: int, snr: float, exclude_hash: str | None = None
+        self,
+        data: bytes,
+        rssi: int,
+        snr: float,
+        exclude_hash: str | None = None,
+        *,
+        rx_radio_id=None,
+        filtered_only=False,
     ) -> None:
         """Raw RX subscriber: push PUSH_CODE_LOG_RX_DATA (0x88) to connected companion clients.
 
@@ -1310,6 +1363,13 @@ class RepeaterDaemon:
         if not servers:
             return
         for fs in servers:
+            receive = getattr(getattr(fs, "bridge", None), "_receive_radio_ids", None)
+            if not isinstance(receive, frozenset):
+                receive = None
+            if filtered_only and receive is None:
+                continue
+            if receive is not None and rx_radio_id not in receive:
+                continue
             if exclude_hash is not None and getattr(fs, "companion_hash", None) == exclude_hash:
                 continue
             try:

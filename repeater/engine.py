@@ -161,6 +161,8 @@ class FanoutTxResult:
 
 
 class RepeaterHandler(BaseHandler):
+    PRIVATE_PEER_ROUTING_VERSION = 1
+
     @staticmethod
     def payload_type() -> int:
 
@@ -322,8 +324,9 @@ class RepeaterHandler(BaseHandler):
         if metadata is None:
             metadata = {}
 
-        # Only count as receive when packet came from the radio (not locally injected)
-        if not local_transmission:
+        peer_ingress = getattr(packet, "_private_peer", False) is True
+        # Network transit is not an RF observation.
+        if not local_transmission and not peer_ingress:
             self.rx_count += 1
             route_type = packet.header & PH_ROUTE_MASK
             if route_type in (ROUTE_TYPE_FLOOD, ROUTE_TYPE_TRANSPORT_FLOOD):
@@ -420,7 +423,7 @@ class RepeaterHandler(BaseHandler):
         original_path_hashes = packet.get_path_hashes_hex()
         path_hash_size = packet.get_path_hash_size()
 
-        if not local_transmission:
+        if not local_transmission and not peer_ingress:
             payload_type = (
                 packet.get_payload_type() if hasattr(packet, "get_payload_type") else None
             )
@@ -497,6 +500,11 @@ class RepeaterHandler(BaseHandler):
 
         if result:
             fwd_pkt, delay = result
+            if peer_ingress:
+                fwd_pkt._private_peer = True
+                fwd_pkt._private_peer_deadline = packet._private_peer_deadline
+                fwd_pkt._path_hash_mode_applied = True
+                fwd_pkt._flood_scope_applied = True
             tx_delay_ms = delay * 1000.0
 
             # Capture the forwarded path (after modification)
@@ -528,6 +536,11 @@ class RepeaterHandler(BaseHandler):
             fanout = bool(tx_radio_ids) and len(tx_radio_ids) > 1
             extra_tx_tasks = []
             for extra_pkt, extra_delay in getattr(result, "extras", ()):
+                if peer_ingress:
+                    extra_pkt._private_peer = True
+                    extra_pkt._private_peer_deadline = packet._private_peer_deadline
+                    extra_pkt._path_hash_mode_applied = True
+                    extra_pkt._flood_scope_applied = True
                 if fanout:
                     self._freeze_tx_normalisation(extra_pkt)
                 extra_airtime_ms = self.airtime_mgr.calculate_airtime(extra_pkt.get_raw_length())
@@ -704,6 +717,16 @@ class RepeaterHandler(BaseHandler):
         except (AttributeError, TypeError):
             pass
 
+        if peer_ingress:
+            # RF storage has no durable provenance column. Keep private outcomes
+            # separate instead of inserting synthetic receive rows or MQTT data.
+            self.private_peer_count = getattr(self, "private_peer_count", 0) + 1
+            self.private_peer_last_outcome = {
+                "transmitted": transmitted, "drop_reason": drop_reason,
+                "radio_context": rx_radio_id, "tx_radio_ids": tx_radio_ids_sent,
+            }
+            return transmitted
+
         display_hashes = (
             original_path_hashes if original_path_hashes else packet.get_path_hashes_hex()
         )
@@ -746,7 +769,7 @@ class RepeaterHandler(BaseHandler):
                     DropReason.EMPTY_PAYLOAD,
                     DropReason.PATH_TOO_LONG,
                 )
-                skip_mqtt = drop_reason in invalid_reasons if drop_reason else False
+                skip_mqtt = peer_ingress or (drop_reason in invalid_reasons if drop_reason else False)
                 self.storage.record_packet(packet_record, skip_mqtt=skip_mqtt, tx_egress=tx_egress)
             except Exception as e:
                 logger.error(f"Failed to store packet record: {e}")
@@ -1117,7 +1140,7 @@ class RepeaterHandler(BaseHandler):
             "length": payload_len,
             "rssi": rssi,
             "snr": snr,
-            "score": flood_rx_metrics(
+            "score": None if getattr(packet, "_private_peer", False) is True else flood_rx_metrics(
                 packet.get_raw_length() if hasattr(packet, "get_raw_length") else 0,
                 snr,
                 self.radio_config["spreading_factor"],
@@ -1696,7 +1719,7 @@ class RepeaterHandler(BaseHandler):
         delay_s = (base_delay_ms * random_mult) / 1000.0
 
         # OpenHop's optional score gate is applied only after the 50 ms threshold.
-        if delay_s >= 0.05 and self.use_score_for_tx:
+        if delay_s >= 0.05 and self.use_score_for_tx and getattr(packet, "_private_peer", False) is not True:
             score = self.calculate_packet_score(snr, packet_len)
             # Higher score = shorter delay: max(0.2, 1.0 - score)
             # score 1.0 → multiplier 0.2 (20% of original)
@@ -1882,6 +1905,11 @@ class RepeaterHandler(BaseHandler):
         known-unsent result. Missing confirmation or an exception is uncertain and
         never retried here. The bridge deadline bounds delay, link wait and backoff.
         """
+
+        packet_deadline = (getattr(fwd_pkt, "_private_peer_deadline", None)
+                           if getattr(fwd_pkt, "_private_peer", False) is True else None)
+        if packet_deadline is not None:
+            deadline = packet_deadline if deadline is None else min(deadline, packet_deadline)
 
         async def delayed_send():
             if deadline is not None and time.monotonic() + delay >= deadline:
@@ -2145,9 +2173,16 @@ class RepeaterHandler(BaseHandler):
     async def _schedule_bridge_plan(self, source, delay, plan, *, local_transmission=False):
         """Use native TX gating per copy; reserve echo state before dispatch."""
         deadline = time.monotonic() + self.channel_bridge.queue_ttl
+        if getattr(source, "_private_peer", False) is True and getattr(source, "_private_peer_deadline", None) is not None:
+            deadline = min(deadline, source._private_peer_deadline)
 
         async def send_one(send):
             radio_id, pkt = send.destination.name, send.packet
+            if getattr(source, "_private_peer", False) is True:
+                pkt._private_peer = True
+                pkt._private_peer_deadline = deadline
+                pkt._path_hash_mode_applied = True
+                pkt._flood_scope_applied = True
             token = None
             admitted = False
             try:

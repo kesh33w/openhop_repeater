@@ -123,6 +123,7 @@ class RepeaterDaemon:
         self.sensor_manager = None
         self.acl = None
         self.router = None
+        self.private_island = None
         self.companion_bridges: dict[int, object] = {}
         self.companion_frame_servers: list = []
         # Shared RegionMap describing the named regions this repeater serves.
@@ -561,6 +562,14 @@ class RepeaterDaemon:
             self.router = PacketRouter(self)
             self.repeater_handler.bridge_egress_callback = self.router.deliver_bridge_egress
             await self.router.start()
+
+            # Private extension stays separate and imports only when explicitly enabled.
+            island = self.config.get("private_island", {})
+            if not isinstance(island, dict):
+                raise ConfigurationError("private_island must be a mapping")
+            if island.get("enabled", False) is not False:
+                from private_link.daemon import install_from_config
+                self.private_island = await install_from_config(self)
 
             # Register router as entry point for ALL packets via fallback handler
             # All received packets flow through router → helpers → repeater engine
@@ -2120,6 +2129,9 @@ class RepeaterDaemon:
         # Stop the dispatcher first so RX stops before its radio is taken away.
         if self.dispatcher is not None and hasattr(self.dispatcher, "stop"):
             await self._shutdown_step("dispatcher", self.dispatcher.stop())
+
+        if self.private_island is not None:
+            await self._shutdown_step("private island", self.private_island.close(), timeout=10.0)
 
         # Stop companion frame servers first to close client sockets and child workers.
         for frame_server in getattr(self, "companion_frame_servers", []):

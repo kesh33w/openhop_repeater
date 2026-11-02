@@ -126,6 +126,8 @@ def _drop_reason_from_recent_packets(handler, packet) -> str | None:
 
 
 class PacketRouter:
+    PRIVATE_PEER_ROUTING_VERSION = 1
+
     def __init__(self, daemon_instance):
         self.daemon = daemon_instance
         self.queue = asyncio.Queue(maxsize=500)
@@ -624,6 +626,10 @@ class PacketRouter:
                 # safety valve — under normal operation LoRa airtime and the duty-cycle
                 # gate keep _in_flight well below _max_in_flight.
                 if self._in_flight >= self._max_in_flight:
+                    if getattr(packet, "_private_peer", False) is True:
+                        binding = getattr(self.daemon, "private_island", None)
+                        if binding is not None:
+                            binding.peer_finished()
                     self._cap_drop_count += 1
                     logger.warning(
                         "In-flight task cap reached (%d/%d), dropping packet "
@@ -643,6 +649,21 @@ class PacketRouter:
                 logger.error(f"Router error: {e}", exc_info=True)
 
     async def _route_packet(self, packet):
+
+        if getattr(packet, "_private_peer", False) is True:
+            # Authenticated transit only: no local app/companion decrypt or RF logging.
+            binding = getattr(self.daemon, "private_island", None)
+            try:
+                deadline = getattr(packet, "_private_peer_deadline", None)
+                if deadline is None or time.monotonic() >= deadline:
+                    return False
+                return await self.daemon.repeater_handler(packet, {
+                    "origin": "private_peer", "rssi": None, "snr": None,
+                    "rx_radio_id": packet._rx_radio_id,
+                })
+            finally:
+                if binding is not None:
+                    binding.peer_finished()
 
         payload_type = packet.get_payload_type()
         processed_by_injection = False

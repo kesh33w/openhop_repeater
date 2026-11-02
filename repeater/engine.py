@@ -1,5 +1,6 @@
 import asyncio
 import copy
+import inspect
 import logging
 import math
 import secrets
@@ -36,7 +37,7 @@ from openhop_core.protocol.packet_utils import (
 )
 
 from repeater.airtime import AirtimeBudgets
-from repeater.channel_bridge import BridgeSettings, EchoLedger
+from repeater.channel_bridge import BridgeSettings, AsyncEchoLedger
 from repeater.config import fabric_origin_tx, fabric_selects_by_ingress_radio
 from repeater.data_acquisition import StorageCollector
 from repeater.modem_config import normalize_modem_config, redact_modem_tokens_in_place
@@ -190,7 +191,7 @@ class RepeaterHandler(BaseHandler):
         self.policy_engine = PolicyEngine.from_runtime_config(config)
         self.channel_bridge = BridgeSettings.from_config(config)
         self.bridge_echoes = (
-            EchoLedger(
+            AsyncEchoLedger(
                 self.channel_bridge.database,
                 ttl=self.channel_bridge.ttl,
                 capacity=self.channel_bridge.capacity,
@@ -444,7 +445,7 @@ class RepeaterHandler(BaseHandler):
                     rx_radio_id=rx_radio_id,
                 )
 
-        if self.bridge_echoes and not local_transmission and self.bridge_echoes.contains(packet):
+        if self.bridge_echoes and not local_transmission and await self.bridge_echoes.contains(packet):
             allow_forward = False
             policy_reason = "Channel bridge echo"
 
@@ -1873,40 +1874,35 @@ class RepeaterHandler(BaseHandler):
         local_transmission: bool = False,
         preferred_tx_radio_id: Optional[str] = None,
         deadline: Optional[float] = None,
+        retry_unsent: bool = False,
     ):
         """Schedule a packet retransmission with delay and return the task.
 
-        If local_transmission is True and the first send fails, retry once after
-        a short delay (handles transient radio/LBT failures).
+        Local origins and opted-in bridge egresses retry once only after an explicit
+        known-unsent result. Missing confirmation or an exception is uncertain and
+        never retried here. The bridge deadline bounds delay, link wait and backoff.
         """
 
         async def delayed_send():
+            if deadline is not None and time.monotonic() + delay >= deadline:
+                return False
             await asyncio.sleep(delay)
-
-            # Each attempt gets its own lock acquisition so the 1-second retry
-            # backoff (local_transmission only) happens OUTSIDE the lock.
-            # Holding _tx_lock across asyncio.sleep(1.0) would block every other
-            # queued TX task for the full backoff period.
-            #
-            # Loop runs once for relayed packets, twice for local_transmission:
-            #   attempt 0 — initial try (no pre-sleep)
-            #   attempt 1 — retry after 1s backoff outside the lock
-            for attempt in range(2 if local_transmission else 1):
+            attempts = 2 if local_transmission or retry_unsent else 1
+            for attempt in range(attempts):
+                if deadline is not None and time.monotonic() >= deadline:
+                    return False
                 if attempt > 0 and not self._radio_link_down(preferred_tx_radio_id):
-                    # A transient failure with the link still up: back off OUTSIDE
-                    # the lock — other tasks can transmit here.
-                    logger.info("Retrying local TX in 1s (lock released during backoff)...")
+                    if deadline is not None and time.monotonic() + 1.0 >= deadline:
+                        return False
+                    logger.info("Retrying definitely-unsent TX in 1s outside the TX lock")
                     await asyncio.sleep(1.0)
 
-                # A dropped link is not a transient failure to back off from. A KISS
-                # modem that falls off USB re-enumerates and re-handshakes in ~2s, so
-                # the flat backoff above would land inside the outage and spend the
-                # retry on a link that is still down — which is exactly what turned
-                # one modem hiccup into a failed message. Wait for the link instead.
-                if local_transmission and not await self._await_radio_link(
-                    self._local_tx_link_wait_s(), preferred_tx_radio_id
-                ):
-                    return False
+                if local_transmission or retry_unsent:
+                    link_wait = self._local_tx_link_wait_s()
+                    if deadline is not None:
+                        link_wait = min(link_wait, max(0.0, deadline - time.monotonic()))
+                    if not await self._await_radio_link(link_wait, preferred_tx_radio_id):
+                        return False
 
                 async with self._tx_lock:
                     if deadline is not None and time.monotonic() >= deadline:
@@ -1960,29 +1956,36 @@ class RepeaterHandler(BaseHandler):
                     # Registered as the send starts: another radio of this node can
                     # hear it while it is still on the air.
                     own_send = self._note_own_send_started(fwd_pkt, preferred_tx_radio_id)
+                    # Never let an earlier attempt or received packet classify this attempt.
+                    fwd_pkt._tx_metadata = {}
                     try:
+                        kwargs = {"wait_for_ack": False}
                         if preferred_tx_radio_id:
+                            kwargs["radio_id"] = preferred_tx_radio_id
+                            # Choose legacy compatibility before calling, never by
+                            # catching a TypeError after a possible on-air write.
                             try:
-                                sent = await self.dispatcher.send_packet(
-                                    fwd_pkt,
-                                    wait_for_ack=False,
-                                    radio_id=preferred_tx_radio_id,
-                                )
+                                inspect.signature(self.dispatcher.send_packet).bind(fwd_pkt, **kwargs)
                             except TypeError:
                                 if deadline is not None:
                                     raise
-                                sent = await self.dispatcher.send_packet(
-                                    fwd_pkt, wait_for_ack=False
-                                )
-                        else:
-                            sent = await self.dispatcher.send_packet(fwd_pkt, wait_for_ack=False)
-                        self._note_own_send_finished(own_send, fwd_pkt, sent=bool(sent))
-                        if not sent:
-                            logger.warning(
-                                "Retransmit failed (attempt %d): dispatcher returned false",
-                                attempt + 1,
-                            )
-                            if local_transmission and attempt == 0:
+                                kwargs.pop("radio_id")
+                            except (ValueError, AttributeError):
+                                pass  # Unknown signature: try the explicit named call once.
+                        sent = await self.dispatcher.send_packet(fwd_pkt, **kwargs)
+                        metadata = getattr(fwd_pkt, "_tx_metadata", None)
+                        metadata = metadata if isinstance(metadata, dict) else {}
+                        uncertain = bool(metadata.get("tx_outcome_uncertain")) or (sent is not True and sent is not False)
+                        confirmed = sent is True and not uncertain
+                        self._note_own_send_finished(own_send, fwd_pkt, sent=confirmed)
+                        if not confirmed:
+                            if uncertain:
+                                fwd_pkt._tx_metadata = {**metadata, "tx_outcome_uncertain": True}
+                            logger.warning("Retransmit not confirmed (attempt %d, uncertain=%s)",
+                                           attempt + 1, uncertain)
+                            # Dispatcher False is its explicit rejection contract. None,
+                            # unknown truthy outcomes and exceptions are not safe retries.
+                            if sent is False and not uncertain and attempt + 1 < attempts:
                                 continue
                             return False
                         self._record_packet_sent(fwd_pkt)
@@ -2011,10 +2014,12 @@ class RepeaterHandler(BaseHandler):
                     except Exception as e:
                         self._note_own_send_finished(own_send, fwd_pkt, sent=False)
                         logger.error(f"Retransmit failed (attempt {attempt + 1}): {e}")
-                        if local_transmission and attempt == 0:
-                            pass  # release lock, outer loop sleeps, then retries
-                        else:
-                            raise
+                        metadata = getattr(fwd_pkt, "_tx_metadata", None)
+                        fwd_pkt._tx_metadata = {
+                            **(metadata if isinstance(metadata, dict) else {}),
+                            "tx_outcome_uncertain": True,
+                        }
+                        raise
             return False
 
         return asyncio.create_task(delayed_send())
@@ -2149,13 +2154,15 @@ class RepeaterHandler(BaseHandler):
                 if send.crossing:
                     if self._bridge_pending >= self.channel_bridge.max_pending:
                         return RadioTxResult(radio_id, False, failure_reason="Bridge queue full")
-                    token = self.bridge_echoes.reserve(source, pkt)
+                    # Claim before the first await so distinct concurrent crossings
+                    # cannot overbook the configured pending limit.
+                    self._bridge_pending += 1
+                    admitted = True
+                    token = await self.bridge_echoes.reserve(source, pkt)
                     if token is None:
                         return RadioTxResult(
                             radio_id, False, failure_reason="Bridge duplicate or ledger full"
                         )
-                    self._bridge_pending += 1
-                    admitted = True
                 task = await self.schedule_retransmit(
                     pkt,
                     delay,
@@ -2163,12 +2170,21 @@ class RepeaterHandler(BaseHandler):
                     local_transmission=local_transmission,
                     preferred_tx_radio_id=radio_id,
                     deadline=deadline,
+                    retry_unsent=True,
                 )
                 success = bool(await task)
                 metadata = getattr(pkt, "_tx_metadata", None)
                 uncertain = isinstance(metadata, dict) and metadata.get("tx_outcome_uncertain")
                 if token and not uncertain:
-                    self.bridge_echoes.finish(token, success=success)
+                    try:
+                        await self.bridge_echoes.finish(token, success=success)
+                    except Exception:
+                        # The pending reservation was durable before TX. Retain it
+                        # conservatively, but do not erase a confirmed modem result
+                        # merely because its sent-state update could not commit.
+                        metadata = dict(metadata) if isinstance(metadata, dict) else {}
+                        metadata["bridge_echo_commit_failed"] = True
+                        logger.exception("Bridge echo completion failed; pending reservation retained")
                 callback = getattr(self, "bridge_egress_callback", None)
                 if (success and send.crossing and callback is not None
                         and pkt.get_payload_type() == PAYLOAD_TYPE_GRP_TXT
@@ -2206,6 +2222,11 @@ class RepeaterHandler(BaseHandler):
             return FanoutTxResult(list(await asyncio.gather(*(send_one(send) for send in plan))))
 
         return asyncio.create_task(run())
+
+    async def aclose_channel_bridge(self):
+        if self.bridge_echoes:
+            await self.bridge_echoes.aclose()
+            self.bridge_echoes = None
 
     def close_channel_bridge(self):
         if self.bridge_echoes:

@@ -715,7 +715,11 @@ async def test_an_unplanned_send_is_charged_to_the_radio_the_send_reports():
     config["fabric"] = {"default_radio": "local", "tx_mode": "bridge"}
     handler = _make_handler(config, legacy_core=True)
     packet = _packet()
-    packet._tx_metadata = {"radio_id": "link"}
+    async def report_actual_egress(sent_packet, **kwargs):
+        sent_packet._tx_metadata = {"radio_id": "link"}
+        return True
+
+    handler.dispatcher.send_packet.side_effect = report_actual_egress
     narrow_ms = handler.airtime_budgets.for_radio("link").calculate_airtime(50)
 
     task = await handler.schedule_retransmit(packet, delay=0.0, airtime_ms=1.0)

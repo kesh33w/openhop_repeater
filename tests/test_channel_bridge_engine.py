@@ -95,7 +95,7 @@ async def test_failed_modem_is_not_success_and_releases_ledger(rig_factory):
     assert await rig.handler(p, fabric_tests._rx("local"))
     rows = rig.handler.storage.record_packet.call_args.kwargs["tx_egress"]
     assert [row["success"] for row in rows] == [True, False]
-    assert not rig.handler.bridge_echoes.contains(p)
+    assert not await rig.handler.bridge_echoes.contains(p)
     assert rig.air.order == ["local"]
 
 
@@ -139,7 +139,7 @@ async def test_expired_sends_never_reach_modem(rig_factory):
     rig.handler._calculate_tx_delay = lambda *args: 1.01
     assert not await rig.handler(packet(), fabric_tests._rx("local"))
     assert not rig.air.frames
-    assert not rig.handler.bridge_echoes.contains(packet())
+    assert not await rig.handler.bridge_echoes.contains(packet())
 
 
 @pytest.mark.asyncio
@@ -147,7 +147,7 @@ async def test_exception_keeps_uncertain_reservation(rig_factory):
     rig = rig_factory()
     rig.link.send = AsyncMock(side_effect=OSError("serial interrupted"))
     assert await rig.handler(packet(), fabric_tests._rx("local"))
-    assert rig.handler.bridge_echoes.contains(packet())
+    assert await rig.handler.bridge_echoes.contains(packet())
     rows = rig.handler.storage.record_packet.call_args.kwargs["tx_egress"]
     assert not rows[1]["success"]
 

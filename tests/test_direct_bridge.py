@@ -53,7 +53,7 @@ async def test_direct_ciphertext_crosses_only_after_consuming_own_hop(
     assert out.path_len == PathUtils.encode_path_len(width, 1)
     assert source.write_to() == original
     callback.assert_not_awaited()
-    assert rig.handler.bridge_echoes.contains(source)
+    assert await rig.handler.bridge_echoes.contains(source)
     assert not await rig.handler(copy.deepcopy(source), _rx(home))
     assert rig.air.order == [other]
 
@@ -159,7 +159,7 @@ async def test_failed_crossing_does_not_report_success_or_repeat_locally(rig_fac
         rig.handler._calculate_tx_delay = lambda *a: 1.01
     assert not await rig.handler(direct(), _rx("local"))
     assert not rig.air.frames
-    assert not rig.handler.bridge_echoes.contains(direct())
+    assert not await rig.handler.bridge_echoes.contains(direct())
 
 
 @pytest.mark.parametrize("path_len,path", [(0xC1, b"abcd"), (0x42, b"ab"), (0x01, b"")])
@@ -201,7 +201,7 @@ async def test_uncertain_direct_send_keeps_restart_reservation_without_retry(rig
     packet = direct()
     assert not await first.handler(packet, _rx("local"))
     assert first.link.send.await_count == 1
-    assert first.handler.bridge_echoes.contains(packet)
+    assert await first.handler.bridge_echoes.contains(packet)
     first.handler.close_channel_bridge()
     second = rig_factory(direct_routes=ROUTES)
     assert not await second.handler(copy.deepcopy(packet), _rx("local"))

@@ -4,10 +4,13 @@ The caller performs ordinary routing first, then schedules each returned copy th
 its existing radio queue. This module never transmits or reports TX success.
 """
 
+import asyncio
 import copy
 import hashlib
 import sqlite3
+import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -210,6 +213,107 @@ class EchoLedger:
 
     def close(self):
         self.db.close()
+
+
+class LedgerBusyError(RuntimeError):
+    """The bounded durable ledger queue cannot accept more work."""
+
+
+@dataclass(frozen=True)
+class _FrozenDigest:
+    value: bytes
+
+    def calculate_packet_hash(self):
+        return self.value
+
+
+class AsyncEchoLedger:
+    """One ordered worker owns the SQLite connection and every transaction.
+
+    Calls await committed results. Cancelling a caller never cancels an already
+    submitted operation: a possible reservation must remain until expiry. The
+    synchronous startup and close helpers exist for startup validation and test
+    teardown; running daemons use aclose after their send tasks have drained.
+    """
+
+    def __init__(self, path, *, ttl=300, capacity=1000, clock=time.time, max_pending=64):
+        if type(max_pending) is not int or not 1 <= max_pending <= 1024:
+            raise ValueError("Invalid echo worker queue limit")
+        self._executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="bridge-echo")
+        self._lock = threading.Lock()
+        self._pending = 0
+        self._max_pending = max_pending
+        self._closing = False
+        self._close_future = None
+        try:
+            # Fail startup on corrupt/unwritable storage before accepting traffic.
+            self._ledger = self._executor.submit(
+                EchoLedger, path, ttl=ttl, capacity=capacity, clock=clock
+            ).result()
+        except BaseException:
+            self._executor.shutdown(wait=True)
+            raise
+
+    def _submit(self, operation):
+        with self._lock:
+            if self._closing:
+                raise RuntimeError("Echo ledger is closing")
+            if self._pending >= self._max_pending:
+                raise LedgerBusyError("Echo ledger worker queue full")
+            self._pending += 1
+            try:
+                future = self._executor.submit(operation)
+            except BaseException:
+                self._pending -= 1
+                raise
+        def finished(_):
+            with self._lock:
+                self._pending -= 1
+        future.add_done_callback(finished)
+        return future
+
+    async def _run(self, operation):
+        future = self._submit(operation)
+        # Wrap/shield keeps cancellation from deleting an accepted durable write.
+        wrapped = asyncio.wrap_future(future)
+        wrapped.add_done_callback(lambda f: None if f.cancelled() else f.exception())
+        return await asyncio.shield(wrapped)
+
+    @staticmethod
+    def _freeze(packet):
+        return _FrozenDigest(bytes(packet.calculate_packet_hash()))
+
+    async def contains(self, packet):
+        frozen = self._freeze(packet)
+        return await self._run(lambda: self._ledger.contains(frozen))
+
+    async def reserve(self, source, outgoing):
+        source, outgoing = self._freeze(source), self._freeze(outgoing)
+        return await self._run(lambda: self._ledger.reserve(source, outgoing))
+
+    async def finish(self, token, *, success):
+        return await self._run(lambda: self._ledger.finish(token, success=success))
+
+    async def _test_operation(self, callback):
+        """Ordered fault/inspection hook for isolated tests; never return a cursor."""
+        return await self._run(lambda: callback(self._ledger))
+
+    def _begin_close(self):
+        with self._lock:
+            if self._close_future is None:
+                self._closing = True
+                # Close is queued after accepted work and is not capacity-rejected.
+                self._close_future = self._executor.submit(self._ledger.close)
+                self._executor.shutdown(wait=False)
+            return self._close_future
+
+    async def aclose(self):
+        await asyncio.shield(asyncio.wrap_future(self._begin_close()))
+
+    def close(self):
+        """Synchronous fixture/startup cleanup; active daemon shutdown uses aclose."""
+        self._begin_close().result()
+        self._executor.shutdown(wait=True)
 
 
 class BridgeSettings:

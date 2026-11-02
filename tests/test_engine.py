@@ -2364,6 +2364,8 @@ class TestPacketInjectionRouting:
 
     @staticmethod
     def _prepare_fast_tx(handler):
+        # The dispatcher API confirms successful sends with the boolean True.
+        handler.dispatcher.send_packet.return_value = True
         handler.airtime_mgr.calculate_airtime = MagicMock(return_value=20.0)
         handler.airtime_mgr.can_transmit = MagicMock(return_value=(True, 0.0))
         handler.airtime_mgr.record_tx = MagicMock()

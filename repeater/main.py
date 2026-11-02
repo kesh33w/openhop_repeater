@@ -2135,7 +2135,9 @@ class RepeaterDaemon:
 
         # Stop router
         if self.router:
-            await self._shutdown_step("router", self.router.stop())
+            # Router has its own five-second drain followed by cancellation and
+            # gather. Give that cleanup room before closing the durable worker.
+            await self._shutdown_step("router", self.router.stop(), timeout=10.0)
 
         # Stop HTTP server. Sync stop() runs off-loop so a wedged handler thread
         # cannot block the sequence.
@@ -2164,9 +2166,9 @@ class RepeaterDaemon:
             await self._shutdown_step("gps service", asyncio.to_thread(self.gps_service.stop))
 
         # Close storage publishers (MQTT/LetsMesh) to stop their worker threads.
-        close_bridge = getattr(self.repeater_handler, "close_channel_bridge", None)
+        close_bridge = getattr(self.repeater_handler, "aclose_channel_bridge", None)
         if callable(close_bridge):
-            close_bridge()
+            await self._shutdown_step("bridge echo worker", close_bridge())
 
         if self.repeater_handler and self.repeater_handler.storage:
             await self._shutdown_step(

@@ -47,7 +47,7 @@ def _make_handler():
     dispatcher = MagicMock()
     dispatcher.radio = radio
     dispatcher.local_identity = None
-    dispatcher.send_packet = AsyncMock()
+    dispatcher.send_packet = AsyncMock(return_value=True)
 
     h = RepeaterHandler.__new__(RepeaterHandler)
     h.config = {
@@ -188,8 +188,9 @@ class TestTxLockSerialisation(unittest.IsolatedAsyncioTestCase):
             pkt = args[0]
             if pkt is pkt_local and first_local_call[0]:
                 first_local_call[0] = False
-                raise RuntimeError("simulated transient radio failure")
+                return False  # Explicit rejection is safe to retry.
             send_times[id(pkt)] = time.monotonic()
+            return True
 
         h.dispatcher.send_packet.side_effect = tracked_send
 
@@ -242,7 +243,7 @@ class TestTxLockSerialisation(unittest.IsolatedAsyncioTestCase):
         h = _make_handler()
         pkt = _make_packet()
 
-        # First attempt: send_packet raises → triggers backoff.
+        # First attempt: an explicit unsent result triggers backoff.
         # Between attempts the budget is consumed, so the retry lock sees False.
         transmit_seq = iter([(True, 0.0), (False, 5.0)])
         h.airtime_mgr.can_transmit.side_effect = lambda ms: next(transmit_seq)
@@ -252,7 +253,7 @@ class TestTxLockSerialisation(unittest.IsolatedAsyncioTestCase):
         async def failing_then_gone(*args, **kwargs):
             send_calls[0] += 1
             if send_calls[0] == 1:
-                raise RuntimeError("transient failure")
+                return False  # No write occurred, safe to retry.
             # Should not reach here on attempt 1 (gate rejects)
             pytest_fail = AssertionError("send_packet called on attempt 1 despite gate rejection")
             raise pytest_fail

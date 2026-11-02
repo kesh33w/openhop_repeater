@@ -35,6 +35,7 @@ from openhop_core.protocol.packet_utils import (
 )
 
 from repeater.airtime import AirtimeBudgets
+from repeater.channel_bridge import BridgeSettings, EchoLedger
 from repeater.config import fabric_origin_tx, fabric_selects_by_ingress_radio
 from repeater.data_acquisition import StorageCollector
 from repeater.modem_config import normalize_modem_config, redact_modem_tokens_in_place
@@ -118,6 +119,8 @@ class RadioTxResult:
     success: bool
     metadata: Optional[dict] = None
     error: Optional[BaseException] = None
+    raw_packet: Optional[str] = None
+    failure_reason: Optional[str] = None
 
 
 @dataclass
@@ -184,6 +187,17 @@ class RepeaterHandler(BaseHandler):
         self.airtime_budgets = AirtimeBudgets(config)
         self.airtime_mgr = self.airtime_budgets.default
         self.policy_engine = PolicyEngine.from_runtime_config(config)
+        self.channel_bridge = BridgeSettings.from_config(config)
+        self.bridge_echoes = (
+            EchoLedger(
+                self.channel_bridge.database,
+                ttl=self.channel_bridge.ttl,
+                capacity=self.channel_bridge.capacity,
+            )
+            if self.channel_bridge
+            else None
+        )
+        self._bridge_pending = 0
         self.seen_packets = OrderedDict()
         self.cache_ttl = max(
             300, config.get("repeater", {}).get("cache_ttl", 3600)
@@ -429,6 +443,10 @@ class RepeaterHandler(BaseHandler):
                     rx_radio_id=rx_radio_id,
                 )
 
+        if self.bridge_echoes and not local_transmission and self.bridge_echoes.contains(packet):
+            allow_forward = False
+            policy_reason = "Channel bridge echo"
+
         # Process for forwarding (skip if repeat disabled or if this is a local transmission).
         # Pass pkt_hash_full so flood_forward / direct_forward don't recompute SHA-256.
         result = (
@@ -448,6 +466,20 @@ class RepeaterHandler(BaseHandler):
             forwarded_path_hashes = packet.get_path_hashes_hex()
             if logger.isEnabledFor(logging.DEBUG):
                 logger.debug(f"Local transmission: calculated delay {delay:.3f}s")
+
+        send_plan = None
+        bridge_home = rx_radio_id or metadata.get("home_radio_id")
+        if self.channel_bridge:
+            if not bridge_home and local_transmission:
+                bridge_home = self.channel_bridge.origin_home
+            if result:
+                self._freeze_tx_normalisation(result[0])
+                send_plan = self.channel_bridge.plan(result[0], bridge_home, policy_context)
+                if not send_plan:
+                    result = None
+                    processed_packet.drop_reason = "Channel bridge has no allowed destination"
+                else:
+                    tx_radio_ids = tuple(send.destination.name for send in send_plan)
 
         if result:
             fwd_pkt, delay = result
@@ -489,7 +521,15 @@ class RepeaterHandler(BaseHandler):
                     (
                         extra_pkt,
                         await self._schedule_egress_tx(
-                            extra_pkt, extra_delay, extra_airtime_ms, tx_radio_ids
+                            extra_pkt,
+                            extra_delay,
+                            extra_airtime_ms,
+                            tx_radio_ids,
+                            send_plan=(
+                                self.channel_bridge.plan(extra_pkt, bridge_home, policy_context)
+                                if self.channel_bridge
+                                else None
+                            ),
                         ),
                     )
                 )
@@ -536,6 +576,7 @@ class RepeaterHandler(BaseHandler):
                     airtime_ms,
                     tx_radio_ids,
                     local_transmission=local_transmission,
+                    send_plan=send_plan,
                 )
                 try:
                     tx_result = await self._await_egress_tx(tx_task, fwd_pkt)
@@ -1815,6 +1856,7 @@ class RepeaterHandler(BaseHandler):
         airtime_ms: float = 0.0,
         local_transmission: bool = False,
         preferred_tx_radio_id: Optional[str] = None,
+        deadline: Optional[float] = None,
     ):
         """Schedule a packet retransmission with delay and return the task.
 
@@ -1851,6 +1893,8 @@ class RepeaterHandler(BaseHandler):
                     return False
 
                 async with self._tx_lock:
+                    if deadline is not None and time.monotonic() >= deadline:
+                        return False
                     # ── Authoritative duty-cycle gate ──────────────────────────
                     # The upfront can_transmit() call in __call__ is advisory: it
                     # avoids scheduling packets obviously over budget, but cannot
@@ -1909,6 +1953,8 @@ class RepeaterHandler(BaseHandler):
                                     radio_id=preferred_tx_radio_id,
                                 )
                             except TypeError:
+                                if deadline is not None:
+                                    raise
                                 sent = await self.dispatcher.send_packet(
                                     fwd_pkt, wait_for_ack=False
                                 )
@@ -2047,6 +2093,7 @@ class RepeaterHandler(BaseHandler):
         tx_radio_ids: Optional[Tuple[str, ...]],
         *,
         local_transmission: bool = False,
+        send_plan=None,
     ):
         """Schedule a TX over the resolved egress set.
 
@@ -2054,6 +2101,10 @@ class RepeaterHandler(BaseHandler):
         ``schedule_retransmit`` path, whose task resolves to a bool and raises on
         a relay send error; more than one fans out.
         """
+        if send_plan is not None:
+            return await self._schedule_bridge_plan(
+                fwd_pkt, delay, send_plan, local_transmission=local_transmission
+            )
         if tx_radio_ids and len(tx_radio_ids) > 1:
             return await self.schedule_retransmit_fanout(
                 fwd_pkt,
@@ -2069,6 +2120,70 @@ class RepeaterHandler(BaseHandler):
             local_transmission=local_transmission,
             preferred_tx_radio_id=tx_radio_ids[0] if tx_radio_ids else None,
         )
+
+    async def _schedule_bridge_plan(self, source, delay, plan, *, local_transmission=False):
+        """Use native TX gating per copy; reserve echo state before dispatch."""
+        deadline = time.monotonic() + self.channel_bridge.queue_ttl
+
+        async def send_one(send):
+            radio_id, pkt = send.destination.name, send.packet
+            token = None
+            admitted = False
+            try:
+                if send.crossing:
+                    if self._bridge_pending >= self.channel_bridge.max_pending:
+                        return RadioTxResult(radio_id, False, failure_reason="Bridge queue full")
+                    token = self.bridge_echoes.reserve(source, pkt)
+                    if token is None:
+                        return RadioTxResult(
+                            radio_id, False, failure_reason="Bridge duplicate or ledger full"
+                        )
+                    self._bridge_pending += 1
+                    admitted = True
+                task = await self.schedule_retransmit(
+                    pkt,
+                    delay,
+                    self._egress_radio_airtime(pkt, radio_id),
+                    local_transmission=local_transmission,
+                    preferred_tx_radio_id=radio_id,
+                    deadline=deadline,
+                )
+                success = bool(await task)
+                metadata = getattr(pkt, "_tx_metadata", None)
+                uncertain = isinstance(metadata, dict) and metadata.get("tx_outcome_uncertain")
+                if token and not uncertain:
+                    self.bridge_echoes.finish(token, success=success)
+                return RadioTxResult(
+                    radio_id,
+                    success,
+                    metadata=metadata if isinstance(metadata, dict) else None,
+                    raw_packet=pkt.write_to().hex(),
+                    failure_reason=None if success else "Native TX rejected, failed, or expired",
+                )
+            except Exception as exc:
+                # An exception can follow an on-air write. Keep the pending echo
+                # reservation until expiry rather than pretending nothing went out.
+                logger.warning("Channel bridge TX via %s failed: %s", radio_id, exc)
+                return RadioTxResult(
+                    radio_id,
+                    False,
+                    error=exc,
+                    raw_packet=pkt.write_to().hex(),
+                    failure_reason="TX exception; outcome uncertain",
+                )
+            finally:
+                if admitted:
+                    self._bridge_pending -= 1
+
+        async def run():
+            return FanoutTxResult(list(await asyncio.gather(*(send_one(send) for send in plan))))
+
+        return asyncio.create_task(run())
+
+    def close_channel_bridge(self):
+        if self.bridge_echoes:
+            self.bridge_echoes.close()
+            self.bridge_echoes = None
 
     def _egress_records(self, tx_result: FanoutTxResult) -> Optional[list]:
         """Per-radio egress rows for storage, or None on a node with one radio.
@@ -2095,6 +2210,12 @@ class RepeaterHandler(BaseHandler):
                 {
                     "radio_id": result.radio_id,
                     "success": bool(result.success),
+                    **({"raw_packet": result.raw_packet} if result.raw_packet is not None else {}),
+                    **(
+                        {"failure_reason": result.failure_reason}
+                        if result.failure_reason is not None
+                        else {}
+                    ),
                     "lbt_attempts": int(metadata.get("lbt_attempts", 0) or 0),
                     "lbt_backoff_ms_total": float(sum(backoffs)),
                     "lbt_channel_busy": bool(metadata.get("lbt_channel_busy", False)),

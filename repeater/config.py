@@ -9,6 +9,7 @@ from typing import Any, Dict, Optional, overload
 
 import yaml
 
+from repeater.channel_bridge import BridgeSettings
 from repeater.exceptions import ConfigurationError
 from repeater.modem_config import (
     LEGACY_MODEM_RADIO_TYPES,
@@ -1176,6 +1177,7 @@ def validate_fabric_config(config: dict) -> tuple:
             f"Unknown fabric.tx_mode={tx_mode!r}. Supported: " + ", ".join(FABRIC_TX_MODES)
         )
 
+    BridgeSettings.from_config(config)
     radio_count = len(radios_cfg) if has_radios else 1
     return _validate_fabric_fanout(fabric_cfg, tx_mode, radio_count)
 
@@ -1570,6 +1572,7 @@ def build_radio_stack(config: dict):
     default_radio = fabric_cfg.get("default_radio") or fabric_cfg.get("default_radio_id")
 
     # Validate before opening any hardware so a bad combination fails fast.
+    BridgeSettings.from_config(config)
     radio_count = len(radios_cfg) if isinstance(radios_cfg, list) and radios_cfg else 1
     repeat_on_ingress, origin_tx = _validate_fabric_fanout(fabric_cfg, tx_mode, radio_count)
 

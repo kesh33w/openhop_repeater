@@ -976,7 +976,9 @@ class RepeaterDaemon:
                     # skip its own frame server when echoing TX as raw RX (a node never
                     # hears its own transmission).
                     packet_injector=functools.partial(
-                        self.router.inject_packet, origin_hash=companion_hash_str
+                        self.router.inject_packet,
+                        origin_hash=companion_hash_str,
+                        home_radio_id=settings.get("home_radio_id"),
                     ),
                     node_name=node_name,
                     radio_config=radio_config,
@@ -1226,7 +1228,9 @@ class RepeaterDaemon:
         bridge = RepeaterCompanionBridge(
             identity=identity,
             packet_injector=functools.partial(
-                self.router.inject_packet, origin_hash=companion_hash_str
+                self.router.inject_packet,
+                origin_hash=companion_hash_str,
+                home_radio_id=settings.get("home_radio_id"),
             ),
             node_name=node_name,
             radio_config=radio_config,
@@ -2096,6 +2100,10 @@ class RepeaterDaemon:
             await self._shutdown_step("gps service", asyncio.to_thread(self.gps_service.stop))
 
         # Close storage publishers (MQTT/LetsMesh) to stop their worker threads.
+        close_bridge = getattr(self.repeater_handler, "close_channel_bridge", None)
+        if callable(close_bridge):
+            close_bridge()
+
         if self.repeater_handler and self.repeater_handler.storage:
             await self._shutdown_step(
                 "storage publishers",

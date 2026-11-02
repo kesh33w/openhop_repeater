@@ -430,12 +430,14 @@ class PacketRouter:
         expected_crc=None,
         origin_hash=None,
         ack_timeout_s: float = 5.0,
+        home_radio_id=None,
     ):
         dispatcher = getattr(self.daemon, "dispatcher", None)
         wait_crc = None
         ack_reservation = None
         try:
             metadata = {
+                "home_radio_id": home_radio_id,
                 "rssi": getattr(packet, "rssi", 0) or getattr(packet, "_rssi", 0),
                 "snr": getattr(packet, "snr", 0.0) or getattr(packet, "_snr", 0.0),
                 "timestamp": getattr(packet, "timestamp", 0),

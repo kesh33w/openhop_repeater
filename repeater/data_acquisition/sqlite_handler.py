@@ -882,7 +882,9 @@ class SQLiteHandler:
                         success INTEGER NOT NULL DEFAULT 0,
                         lbt_attempts INTEGER NOT NULL DEFAULT 0,
                         lbt_backoff_ms_total REAL NOT NULL DEFAULT 0,
-                        lbt_channel_busy INTEGER NOT NULL DEFAULT 0
+                        lbt_channel_busy INTEGER NOT NULL DEFAULT 0,
+                        raw_packet TEXT,
+                        failure_reason TEXT
                     )
                 """
                 )
@@ -1672,7 +1674,9 @@ class SQLiteHandler:
                             success INTEGER NOT NULL DEFAULT 0,
                             lbt_attempts INTEGER NOT NULL DEFAULT 0,
                             lbt_backoff_ms_total REAL NOT NULL DEFAULT 0,
-                            lbt_channel_busy INTEGER NOT NULL DEFAULT 0
+                            lbt_channel_busy INTEGER NOT NULL DEFAULT 0,
+                        raw_packet TEXT,
+                        failure_reason TEXT
                         )
                         """
                     )
@@ -1685,6 +1689,12 @@ class SQLiteHandler:
                         (migration_name, time.time()),
                     )
                     logger.info(f"Migration '{migration_name}' applied successfully")
+
+                # Actual bytes and failure details for destination-specific copies.
+                columns = {row[1] for row in conn.execute("PRAGMA table_info(packet_egress)")}
+                for column in ("raw_packet", "failure_reason"):
+                    if column not in columns:
+                        conn.execute(f"ALTER TABLE packet_egress ADD COLUMN {column} TEXT")
 
                 conn.commit()
 
@@ -1991,6 +2001,8 @@ class SQLiteHandler:
                     int(egress.get("lbt_attempts") or 0),
                     float(egress.get("lbt_backoff_ms_total") or 0.0),
                     int(bool(egress.get("lbt_channel_busy"))),
+                    egress.get("raw_packet"),
+                    egress.get("failure_reason"),
                 )
                 for egress in egresses
                 if isinstance(egress, dict)
@@ -2002,8 +2014,9 @@ class SQLiteHandler:
                     """
                     INSERT INTO packet_egress (
                         packet_id, timestamp, radio_id, success,
-                        lbt_attempts, lbt_backoff_ms_total, lbt_channel_busy
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                        lbt_attempts, lbt_backoff_ms_total, lbt_channel_busy,
+                        raw_packet, failure_reason
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                     rows,
                 )

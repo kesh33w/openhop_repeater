@@ -336,8 +336,8 @@ class PacketRouter:
     async def deliver_bridge_egress(self, packet, source, radio_id):
         """Deliver a confirmed crossing to opted-in destination feeds, without retransmission."""
         received = copy.copy(packet)
-        received._rssi = 0
-        received._snr = 0
+        received._rssi = None
+        received._snr = None
         received._rx_radio_id = radio_id
         received._injected_origin_hash = getattr(source, "_injected_origin_hash", None)
         metadata = {"rx_radio_id": radio_id}
@@ -348,15 +348,8 @@ class PacketRouter:
         }
         if not bridges:
             return
-        # This is local egress observation, not an independent RF reception.
-        await self.daemon._on_raw_rx_for_companions(
-            received.write_to(),
-            0,
-            0.0,
-            exclude_hash=getattr(source, "_injected_origin_hash", None),
-            rx_radio_id=radio_id,
-            filtered_only=True,
-        )
+        # No raw-RX frame exists without signal fields. A local egress observation
+        # must not synthesize an RF reception with invented signal measurements.
         await self._fan_out_to_bridges(received, bridges, context="bridge egress")
 
     async def _fan_out_to_bridges(self, packet, bridges, *, context: str) -> tuple:

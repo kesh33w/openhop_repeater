@@ -5518,8 +5518,8 @@ class SQLiteHandler:
                 rows = [dict(row) for row in cursor.fetchall()]
                 for msg in rows:
                     msg["sender_prefix"] = bytes.fromhex(msg.get("sender_prefix") or "")
-                    msg["snr"] = float(msg.get("snr") or 0.0)
-                    msg["rssi"] = int(msg.get("rssi") or 0)
+                    msg["snr"] = float(msg["snr"]) if msg.get("snr") is not None else None
+                    msg["rssi"] = int(msg["rssi"]) if msg.get("rssi") is not None else None
                     msg["channel_data_type"] = int(msg.get("channel_data_type") or 0)
                     msg["channel_data_payload"] = bytes(msg.get("channel_data_payload") or b"")
                 return rows
@@ -5575,8 +5575,8 @@ class SQLiteHandler:
                         msg.get("channel_idx", 0),
                         msg.get("path_len", 0),
                         sender_prefix,
-                        float(msg.get("snr") or 0.0),
-                        int(msg.get("rssi") or 0),
+                        float(msg["snr"]) if msg.get("snr") is not None else None,
+                        int(msg["rssi"]) if msg.get("rssi") is not None else None,
                         int(msg.get("channel_data_type") or 0),
                         bytes(msg.get("channel_data_payload") or b""),
                         packet_hash,
@@ -5655,8 +5655,8 @@ class SQLiteHandler:
                     return None
                 msg = dict(row)
                 msg["sender_prefix"] = bytes.fromhex(msg.get("sender_prefix") or "")
-                msg["snr"] = float(msg.get("snr") or 0.0)
-                msg["rssi"] = int(msg.get("rssi") or 0)
+                msg["snr"] = float(msg["snr"]) if msg.get("snr") is not None else None
+                msg["rssi"] = int(msg["rssi"]) if msg.get("rssi") is not None else None
                 msg["channel_data_type"] = int(msg.get("channel_data_type") or 0)
                 msg["channel_data_payload"] = bytes(msg.get("channel_data_payload") or b"")
                 conn.execute("DELETE FROM companion_messages WHERE id = ?", (msg["id"],))

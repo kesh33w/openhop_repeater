@@ -72,5 +72,5 @@ async def test_confirmed_crossing_delivers_only_opted_in_destination_without_ret
     await router.deliver_bridge_egress(target, source, "b")
     assert router._fan_out_to_bridges.call_args.args[1] == {2: b}
     observed = router._fan_out_to_bridges.call_args.args[0]
-    assert observed.rssi == 0 and observed.snr == 0 and observed._rx_radio_id == "b"
-    assert d._on_raw_rx_for_companions.call_args.kwargs["rx_radio_id"] == "b"
+    assert observed._rssi is None and observed._snr is None and observed._rx_radio_id == "b"
+    d._on_raw_rx_for_companions.assert_not_awaited()

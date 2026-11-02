@@ -232,11 +232,11 @@ def test_legacy_schema_migrates_and_defaults(tmp_path):
     conn.close()
     assert {"snr", "rssi", "channel_data_type", "channel_data_payload"} <= columns
 
-    # (b) the old row pops with defaults and no exception.
+    # (b) old rows without recorded metrics remain unknown, not fabricated zeroes.
     old = h2.companion_pop_message(_HASH)
     assert old["text"] == "old"
-    assert old["snr"] == 0.0
-    assert old["rssi"] == 0
+    assert old["snr"] is None
+    assert old["rssi"] is None
     assert old["channel_data_type"] == 0
     assert old["channel_data_payload"] == b""
 
@@ -247,3 +247,17 @@ def test_legacy_schema_migrates_and_defaults(tmp_path):
     assert data["channel_data_payload"] == b"\x01\x02\x03\xff\x10"
     assert data["snr"] == pytest.approx(-6.25)
     assert data["rssi"] == -70
+
+
+def test_unknown_channel_signal_survives_restart_and_uses_signal_free_frame(tmp_path):
+    handler = _handler(tmp_path)
+    message = {**_CHANNEL_TEXT, 'packet_hash': 'unknown-signal', 'snr': None, 'rssi': None}
+    assert handler.companion_push_message(_HASH, message)
+    restarted = _handler(tmp_path)
+    loaded = restarted.companion_load_messages(_HASH)
+    assert loaded[0]['snr'] is None and loaded[0]['rssi'] is None
+    server = _frame_server(restarted)
+    restored = server._sync_next_from_persistence()
+    assert restored.snr is None and restored.rssi is None
+    assert server._build_message_frame(restored)[0] == 8
+    assert restarted.companion_pop_message(_HASH) is None

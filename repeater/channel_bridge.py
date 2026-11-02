@@ -11,8 +11,18 @@ import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from openhop_core.protocol.constants import PAYLOAD_TYPE_GRP_TXT, PH_ROUTE_MASK, ROUTE_TYPE_FLOOD
+from openhop_core.protocol.constants import (
+    PAYLOAD_TYPE_ACK,
+    PAYLOAD_TYPE_GRP_TXT,
+    PAYLOAD_TYPE_MULTIPART,
+    PAYLOAD_TYPE_TXT_MSG,
+    PH_ROUTE_MASK,
+    ROUTE_TYPE_DIRECT,
+    ROUTE_TYPE_FLOOD,
+)
 from openhop_core.protocol.crypto import CryptoUtils
+from openhop_core.protocol.packet_utils import PathUtils
+
 from repeater.radio_ids import configured_radio_ids
 
 
@@ -213,6 +223,7 @@ class BridgeSettings:
             "enabled",
             "channels",
             "mappings",
+            "direct_routes",
             "echo_database",
             "echo_ttl_seconds",
             "echo_capacity",
@@ -234,16 +245,29 @@ class BridgeSettings:
         from repeater.bridge_homes import validate_bridge_homes
 
         validate_bridge_homes(config)
-        channels = cfg.get("channels")
-        if not isinstance(channels, dict) or not channels or len(channels) > 64:
-            raise ValueError("channel_bridge requires 1 to 64 named channel keys")
+        routes = cfg.get("direct_routes", [])
+        if not isinstance(routes, list) or len(routes) > len(ids):
+            raise ValueError("channel_bridge.direct_routes must be a bounded list")
+        self.direct_routes = {}
+        for rule in routes:
+            if not isinstance(rule, dict) or set(rule) != {"source_radio", "target_radio"}:
+                raise ValueError("Invalid channel_bridge direct route fields")
+            source, target = rule["source_radio"], rule["target_radio"]
+            if source not in ids or target not in ids or source == target:
+                raise ValueError("Direct routes require distinct configured radios")
+            if source in self.direct_routes:
+                raise ValueError("Direct routes require one destination per source radio")
+            self.direct_routes[source] = target
+        channels = cfg.get("channels", {})
+        if not isinstance(channels, dict) or len(channels) > 64 or (not channels and not routes):
+            raise ValueError("channel_bridge requires named channel keys or direct routes")
         try:
             parsed = [Channel(name, bytes.fromhex(key)) for name, key in channels.items()]
         except (TypeError, ValueError):
             raise ValueError(
                 "channel_bridge channel keys must be 16 or 32 byte hex strings"
             ) from None
-        mappings = cfg.get("mappings")
+        mappings = cfg.get("mappings", [])
         if not isinstance(mappings, list) or len(mappings) > 128:
             raise ValueError("channel_bridge.mappings must be a bounded list")
         crossings = []
@@ -308,10 +332,39 @@ class BridgeSettings:
             raise ValueError("channel_bridge.enabled must be a boolean")
         return cls(config) if cfg.get("enabled", False) else None
 
-    def plan(self, packet, home, context):
+    @staticmethod
+    def is_direct_transit(packet, local_prefix, *, local_transmission=False):
+        """Capture received next-hop eligibility before native routing consumes it."""
+        if local_transmission or packet.header & PH_ROUTE_MASK != ROUTE_TYPE_DIRECT:
+            return False
+        if not PathUtils.is_valid_path_len(packet.path_len):
+            return False
+        width, count = packet.get_path_hash_size(), packet.get_path_hash_count()
+        if not count or len(packet.path) != width * count:
+            return False
+        if bytes(packet.path[:width]) != bytes(local_prefix[:width]):
+            return False
+        kind = packet.get_payload_type()
+        if kind in (PAYLOAD_TYPE_TXT_MSG, PAYLOAD_TYPE_ACK):
+            return True
+        payload = packet.payload or b""
+        return (
+            kind == PAYLOAD_TYPE_MULTIPART
+            and len(payload) >= 5
+            and payload[0] & 0x0F == PAYLOAD_TYPE_ACK
+        )
+
+    def plan(self, packet, home, context, *, direct_transit=False):
         if home not in self.radio_ids:
             return ()
-        sends = self.planner.plan(packet, Destination("radio", home))
+        if direct_transit and home in self.direct_routes:
+            sends = (
+                PlannedSend(
+                    Destination("radio", self.direct_routes[home]), copy.deepcopy(packet), True
+                ),
+            )
+        else:
+            sends = self.planner.plan(packet, Destination("radio", home))
         allowed = []
         for send in sends:
             policy = self.crossing_policy if send.crossing else self.local_policy

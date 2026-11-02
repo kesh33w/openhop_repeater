@@ -17,6 +17,7 @@ from openhop_core.protocol.constants import (
     PAYLOAD_TYPE_ACK,
     PAYLOAD_TYPE_ADVERT,
     PAYLOAD_TYPE_ANON_REQ,
+    PAYLOAD_TYPE_GRP_TXT,
     PAYLOAD_TYPE_MULTIPART,
     PAYLOAD_TYPE_TRACE,
     PH_ROUTE_MASK,
@@ -447,6 +448,12 @@ class RepeaterHandler(BaseHandler):
             allow_forward = False
             policy_reason = "Channel bridge echo"
 
+        direct_transit = bool(
+            self.channel_bridge and self.channel_bridge.is_direct_transit(
+                packet, self.local_hash_bytes, local_transmission=local_transmission
+            )
+        )
+
         # Process for forwarding (skip if repeat disabled or if this is a local transmission).
         # Pass pkt_hash_full so flood_forward / direct_forward don't recompute SHA-256.
         result = (
@@ -474,7 +481,9 @@ class RepeaterHandler(BaseHandler):
                 bridge_home = self.channel_bridge.origin_home
             if result:
                 self._freeze_tx_normalisation(result[0])
-                send_plan = self.channel_bridge.plan(result[0], bridge_home, policy_context)
+                send_plan = self.channel_bridge.plan(
+                    result[0], bridge_home, policy_context, direct_transit=direct_transit
+                )
                 if not send_plan:
                     result = None
                     processed_packet.drop_reason = (
@@ -530,7 +539,10 @@ class RepeaterHandler(BaseHandler):
                             extra_airtime_ms,
                             tx_radio_ids,
                             send_plan=(
-                                self.channel_bridge.plan(extra_pkt, bridge_home, policy_context)
+                                self.channel_bridge.plan(
+                                    extra_pkt, bridge_home, policy_context,
+                                    direct_transit=direct_transit,
+                                )
                                 if self.channel_bridge
                                 else None
                             ),
@@ -2158,7 +2170,9 @@ class RepeaterHandler(BaseHandler):
                 if token and not uncertain:
                     self.bridge_echoes.finish(token, success=success)
                 callback = getattr(self, "bridge_egress_callback", None)
-                if success and send.crossing and callback is not None:
+                if (success and send.crossing and callback is not None
+                        and pkt.get_payload_type() == PAYLOAD_TYPE_GRP_TXT
+                        and pkt.header & PH_ROUTE_MASK == ROUTE_TYPE_FLOOD):
                     try:
                         await callback(pkt, source, radio_id)
                     except Exception:

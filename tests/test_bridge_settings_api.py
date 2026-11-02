@@ -177,3 +177,28 @@ def test_validation_yaml_error_never_echoes_key_line(tmp_path, monkeypatch):
     result = api.validate_config()
     assert "SECRET-CHANNEL-KEY" not in str(result)
     assert "YAML syntax error" in str(result)
+
+
+def test_direct_routes_default_off_and_save_without_channels(config):
+    assert bridge_view({})["settings"]["direct_routes"] == []
+    routes = [{"source_radio": "a", "target_radio": "b"}]
+    updated = bridge_candidate(config, {"channels": {}, "mappings": [], "direct_routes": routes})
+    assert updated["direct_routes"] == routes
+    assert updated["channels"] == {}
+    assert bridge_view({**config, "channel_bridge": updated})["settings"]["direct_routes"] == routes
+    # Removal is explicit and independent of existing group mappings.
+    assert bridge_candidate(config, {"direct_routes": []})["direct_routes"] == []
+
+
+@pytest.mark.parametrize("routes", [
+    [{"source_radio": "a", "target_radio": "a"}],
+    [{"source_radio": "unknown", "target_radio": "b"}],
+    [{"source_radio": "a", "target_radio": "b"}] * 2,
+    [{"source_radio": "a", "target_radio": "b", "unexpected": True}],
+    "a:b",
+])
+def test_invalid_direct_route_drafts_are_rejected_atomically(config, routes):
+    before = copy.deepcopy(config)
+    with pytest.raises((ValueError, TypeError)):
+        bridge_candidate(config, {"enabled": False, "direct_routes": routes})
+    assert config == before

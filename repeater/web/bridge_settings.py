@@ -11,6 +11,7 @@ FIELDS = {
     "enabled",
     "channels",
     "mappings",
+    "direct_routes",
     "echo_database",
     "echo_ttl_seconds",
     "echo_capacity",
@@ -37,6 +38,7 @@ def bridge_view(config, config_path=None):
         "echo_database",
         str(Path(resolve_storage_dir(config, config_path=config_path)) / "bridge-echo.sqlite"),
     )
+    section.setdefault("direct_routes", [])
     section.setdefault("max_pending_crossings", 64)
     section.setdefault("queue_ttl_seconds", 30)
     redact_bridge({"channel_bridge": section})
@@ -71,7 +73,7 @@ def bridge_candidate(config, updates, config_path=None):
         elif not isinstance(value, str) or len(value) not in (32, 64):
             raise ValueError("Channel keys must contain 32 or 64 hexadecimal characters")
     # Validate configured drafts even when disabled; a bare disable remains possible.
-    if section.get("enabled") or channels or section.get("mappings"):
+    if section.get("enabled") or channels or section.get("mappings") or section.get("direct_routes"):
         candidate = {**config, "channel_bridge": section}
         BridgeSettings(candidate)
     return section

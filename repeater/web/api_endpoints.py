@@ -30,6 +30,7 @@ from repeater.companion.utils import (
     validate_companion_config_capacity,
 )
 from repeater.config import resolve_storage_dir, validate_fabric_config
+from repeater.web.bridge_settings import bridge_candidate, bridge_view, redact_bridge
 from repeater.handler_helpers.acl import role_name as acl_role_name
 from repeater.modem_config import (
     LEGACY_MODEM_RADIO_TYPES,
@@ -1852,7 +1853,8 @@ class APIEndpoints:
     @cherrypy.tools.json_out()
     def stats(self):
         try:
-            stats = self.stats_getter() if self.stats_getter else {}
+            stats = copy.deepcopy(self.stats_getter() if self.stats_getter else {})
+            redact_bridge(stats.get("config", {}))
             if isinstance(stats.get("config", {}).get("mqtt_brokers"), dict):
                 # The engine embeds the live section. Send broker passwords as the
                 # sentinel, which update_mqtt_config turns back into the stored one.
@@ -2662,6 +2664,33 @@ class APIEndpoints:
 
     @cherrypy.expose
     @cherrypy.tools.json_out()
+    def bridge_settings(self):
+        """Authenticated, secret-free bridge settings. Changes require restart."""
+        self._set_cors_headers()
+        return self._success(bridge_view(self.config, self._config_path))
+
+    @cherrypy.expose
+    @cherrypy.tools.json_out()
+    @cherrypy.tools.json_in()
+    def update_bridge_settings(self):
+        self._set_cors_headers()
+        if cherrypy.request.method == "OPTIONS":
+            return ""
+        self._require_post()
+        try:
+            section = bridge_candidate(self.config, cherrypy.request.json, self._config_path)
+        except (ValueError, TypeError, KeyError):
+            # Never echo request data, which can contain channel keys.
+            return self._error("Invalid bridge settings. Check radios, channels, mappings and limits.")
+        result = self.config_manager.update_and_save(
+            {"channel_bridge": section}, live_update=False
+        )
+        if not result.get("success"):
+            return self._error("Bridge settings could not be saved")
+        return self._success({"saved": True, "restart_required": True})
+
+    @cherrypy.expose
+    @cherrypy.tools.json_out()
     @cherrypy.tools.json_in()
     def update_web_config(self):
         """Update web configuration (CORS, frontend path) using ConfigManager."""
@@ -3392,10 +3421,10 @@ class APIEndpoints:
                 if mark is not None:
                     add_error(
                         "config",
-                        f"YAML syntax error at line {mark.line + 1}, column {mark.column + 1}: {e}",
+                        f"YAML syntax error at line {mark.line + 1}, column {mark.column + 1}",
                     )
                 else:
-                    add_error("config", f"YAML syntax error: {e}")
+                    add_error("config", "YAML syntax error")
                 config_yaml = None
             except Exception as e:
                 add_error("config", f"Failed to read configuration: {e}")
@@ -8830,6 +8859,8 @@ class APIEndpoints:
 
             full_backup = str(include_secrets).lower() in ("true", "1", "yes")
             exported = normalize_modem_config(copy.deepcopy(self.config))
+            # Bridge keys are write-only, including full export requests.
+            redact_bridge(exported)
 
             if full_backup:
                 # Convert binary identity key to hex for JSON serialisation
@@ -8886,6 +8917,7 @@ class APIEndpoints:
                 "version": __version__,
                 "config_path": self._config_path,
                 "includes_secrets": full_backup,
+                "excluded_secrets": ["channel_bridge.channels"],
             }
 
             return {"success": True, "data": {"meta": meta, "config": exported}}

@@ -1,3 +1,4 @@
+from repeater.bridge_homes import BridgeHomeAssignmentError, validate_companion_home
 import copy
 import json
 import logging
@@ -30,6 +31,7 @@ from repeater.companion.utils import (
     validate_companion_config_capacity,
 )
 from repeater.config import resolve_storage_dir, validate_fabric_config
+from repeater.radio_ids import canonical_radio_id, configured_radio_ids
 from repeater.web.bridge_settings import bridge_candidate, bridge_view, redact_bridge
 from repeater.handler_helpers.acl import role_name as acl_role_name
 from repeater.modem_config import (
@@ -2679,6 +2681,8 @@ class APIEndpoints:
         self._require_post()
         try:
             section = bridge_candidate(self.config, cherrypy.request.json, self._config_path)
+        except BridgeHomeAssignmentError:
+            return self._error("bridge_home_assignment_required")
         except (ValueError, TypeError, KeyError):
             # Never echo request data, which can contain channel keys.
             return self._error("Invalid bridge settings. Check radios, channels, mappings and limits.")
@@ -4977,6 +4981,7 @@ class APIEndpoints:
             self._require_post()
             data = cherrypy.request.json or {}
 
+            configured_radio_ids(self.config)
             applied = []
 
             # Ensure config sections exist
@@ -5011,15 +5016,13 @@ class APIEndpoints:
                 default_id = fabric.get("default_radio") or fabric.get("default_radio_id")
                 if default_id is None:
                     first = radios_list[0] if isinstance(radios_list[0], dict) else {}
-                    default_id = first.get("id") or first.get("radio_id")
+                    default_id = canonical_radio_id(first)
                 if effective_target_id is None:
                     effective_target_id = default_id
 
             if isinstance(radios_list, list) and effective_target_id:
                 for entry in radios_list:
-                    if not isinstance(entry, dict):
-                        continue
-                    rid = entry.get("id") or entry.get("radio_id")
+                    rid = canonical_radio_id(entry)
                     if str(rid) == str(effective_target_id):
                         target_entry = entry
                         if not isinstance(entry.get("radio"), dict):
@@ -6682,6 +6685,12 @@ class APIEndpoints:
                 if interval_error:
                     return self._error(interval_error)
 
+            if identity_type == "companion":
+                try:
+                    validate_companion_home(self.config, settings, context=f"Companion '{name}'")
+                except ValueError as error:
+                    return self._error(str(error))
+
             # Auto-generate identity key if not provided
             key_was_generated = False
             if not identity_key:
@@ -6692,13 +6701,16 @@ class APIEndpoints:
                     _, private_key = generate_meshcore_keypair()
                     identity_key = private_key[:32].hex()
                     key_was_generated = True
-                    logger.info(f"Auto-generated identity key for '{name}': {identity_key[:16]}...")
+                    logger.info("Auto-generated identity key for %s", name)
                 except Exception as gen_error:
                     logger.error(f"Failed to auto-generate identity key: {gen_error}")
                     return self._error(f"Failed to auto-generate identity key: {gen_error}")
 
+            previous_identities = self.config.get("identities")
             identities_config = self.config.get("identities", {})
-            if "identities" not in self.config:
+            if identity_type == "companion":
+                identities_config = copy.deepcopy(identities_config)
+            if identity_type != "companion" and "identities" not in self.config:
                 self.config["identities"] = {}
 
             if identity_type == "companion":
@@ -6718,6 +6730,7 @@ class APIEndpoints:
                     return self._error(f"Identity with name '{name}' already exists")
 
                 try:
+                    validate_companion_home(self.config, settings, context=f"Companion '{name}'")
                     bridge_settings = parse_companion_bridge_kwargs(settings)
                 except ValueError as e:
                     return self._error(str(e))
@@ -6727,6 +6740,8 @@ class APIEndpoints:
                     "tcp_port": settings.get("tcp_port", 5000),
                     "bind_address": settings.get("bind_address", "0.0.0.0"),  # nosec B104
                 }
+                if "home_radio_id" in settings:
+                    comp_settings["home_radio_id"] = settings["home_radio_id"]
                 if "tcp_timeout" in settings:
                     comp_settings["tcp_timeout"] = settings["tcp_timeout"]
                 if "trim_contacts_on_overflow" in settings:
@@ -6761,7 +6776,8 @@ class APIEndpoints:
                     except (ValueError, TypeError) as e:
                         return self._error(str(e))
                 companions.append(new_identity)
-                self.config["identities"]["companions"] = companions
+                identities_config["companions"] = companions
+                self.config["identities"] = identities_config
             else:
                 # Room server
                 room_servers = identities_config.get("room_servers") or []
@@ -6799,9 +6815,17 @@ class APIEndpoints:
                 room_servers.append(new_identity)
                 self.config["identities"]["room_servers"] = room_servers
 
-            # Save to file
-            saved = self.config_manager.save_to_file()
+            # Publish companion changes only if persistence succeeds.
+            try:
+                saved = self.config_manager.save_to_file()
+            except Exception:
+                saved = False
             if not saved:
+                if identity_type == "companion":
+                    if previous_identities is None:
+                        self.config.pop("identities", None)
+                    else:
+                        self.config["identities"] = previous_identities
                 return self._error("Failed to save configuration to file")
 
             logger.info(
@@ -6963,7 +6987,7 @@ class APIEndpoints:
                     )
                 if err:
                     return self._error(err)
-                identity = companions[identity_index]
+                identity = dict(companions[identity_index])
                 resolved_name = str(identity.get("name") or "").strip()
 
                 if "new_name" in data:
@@ -6992,6 +7016,9 @@ class APIEndpoints:
                         merged_settings = merge_companion_settings_update(
                             identity.get("settings") or {},
                             data["settings"],
+                        )
+                        validate_companion_home(
+                            self.config, merged_settings, context=f"Companion '{resolved_name}'"
                         )
                     except ValueError as e:
                         return self._error(str(e))
@@ -7037,10 +7064,24 @@ class APIEndpoints:
 
                     identity["settings"] = merged_settings
 
+                try:
+                    validate_companion_home(
+                        self.config, identity.get("settings") or {},
+                        context=f"Companion '{resolved_name}'",
+                    )
+                except ValueError as e:
+                    return self._error(str(e))
+
+                previous_companions = companions
+                companions = list(companions)
                 companions[identity_index] = identity
                 self.config["identities"]["companions"] = companions
-                saved = self.config_manager.save_to_file()
+                try:
+                    saved = self.config_manager.save_to_file()
+                except Exception:
+                    saved = False
                 if not saved:
+                    self.config["identities"]["companions"] = previous_companions
                     return self._error("Failed to save configuration to file")
                 logger.info(f"Updated companion: {resolved_name}")
                 message = (

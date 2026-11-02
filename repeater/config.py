@@ -10,6 +10,7 @@ from typing import Any, Dict, Optional, overload
 import yaml
 
 from repeater.channel_bridge import BridgeSettings
+from repeater.radio_ids import canonical_radio_id, configured_radio_ids
 from repeater.exceptions import ConfigurationError
 from repeater.modem_config import (
     LEGACY_MODEM_RADIO_TYPES,
@@ -159,7 +160,7 @@ def disconnected_modems(config: dict, radio) -> list[str]:
     entries = config.get("radios")
     if isinstance(entries, list) and entries:
         configured = [
-            (str(e.get("id") or e.get("radio_id") or ""), e) for e in entries if isinstance(e, dict)
+            (canonical_radio_id(e), e) for e in entries
         ]
         physicals = radios if isinstance(radios, dict) else {}
     else:
@@ -887,9 +888,7 @@ def _merge_radio_entry(global_config: dict, entry: dict) -> dict:
     if not isinstance(entry, dict):
         raise ValueError("each radios[] entry must be a mapping")
 
-    radio_id = entry.get("id") or entry.get("radio_id")
-    if not radio_id:
-        raise ValueError("each radios[] entry requires an 'id'")
+    radio_id = canonical_radio_id(entry)
 
     merged = dict(global_config)
 
@@ -1158,6 +1157,7 @@ def validate_fabric_config(config: dict) -> tuple:
 
     Returns the parsed ``(repeat_on_ingress, origin_tx)``.
     """
+    configured_radio_ids(config)
     fabric_cfg = config.get("fabric") if isinstance(config.get("fabric"), dict) else {}
     radios_cfg = config.get("radios")
 
@@ -1397,10 +1397,12 @@ def build_metering_profiles(config: dict) -> list:
             logger.warning("Cannot profile radios[] entry %d for metering: %s", index, exc)
         if profile is None:
             if radio_id is None:
-                raw_id = (
-                    entry.get("id") or entry.get("radio_id") if isinstance(entry, dict) else None
-                )
-                radio_id = str(raw_id or f"radio{index}")
+                try:
+                    radio_id = canonical_radio_id(entry)
+                except ValueError:
+                    # Diagnostic-only fallback for malformed profiles; stack
+                    # preflight rejects these IDs before opening any hardware.
+                    radio_id = f"radio{index}"
             logger.info(
                 "Radio %s has no air profile; metering it on the air settings it inherits",
                 radio_id,
@@ -1571,7 +1573,8 @@ def build_radio_stack(config: dict):
     tx_mode = str(fabric_cfg.get("tx_mode", "default"))
     default_radio = fabric_cfg.get("default_radio") or fabric_cfg.get("default_radio_id")
 
-    # Validate before opening any hardware so a bad combination fails fast.
+    # Validate every ID before opening hardware, including bridge-disabled stacks.
+    configured_radio_ids(config)
     BridgeSettings.from_config(config)
     radio_count = len(radios_cfg) if isinstance(radios_cfg, list) and radios_cfg else 1
     repeat_on_ingress, origin_tx = _validate_fabric_fanout(fabric_cfg, tx_mode, radio_count)

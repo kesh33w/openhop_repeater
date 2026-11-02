@@ -12,6 +12,7 @@ def config():
         "radios": [{"id": "a"}, {"id": "b"}],
         "channel_bridge": {
             "enabled": True,
+            "origin_home": "a",
             "channels": {"Public": "12" * 16, "#test": "34" * 16},
             "echo_database": "/tmp/bridge.sqlite",
             "mappings": [

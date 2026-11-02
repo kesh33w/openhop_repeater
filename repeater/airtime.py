@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from typing import Optional, Tuple
 
 from openhop_core.protocol.packet_utils import calculate_lora_airtime_ms
+from repeater.radio_ids import canonical_radio_id
 
 logger = logging.getLogger("AirtimeManager")
 
@@ -533,9 +534,7 @@ class AirtimeBudgets:
         if not isinstance(radios, list):
             return None
         for entry in radios:
-            if not isinstance(entry, dict):
-                continue
-            if str(entry.get("id") or entry.get("radio_id") or "") != radio_id:
+            if canonical_radio_id(entry) != radio_id:
                 continue
             duty_cycle = entry.get("duty_cycle")
             if isinstance(duty_cycle, dict) and "max_airtime_per_minute" in duty_cycle:

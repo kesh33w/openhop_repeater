@@ -30,6 +30,8 @@ from repeater.config import (
     resolve_storage_dir,
     save_config,
 )
+from repeater.bridge_homes import validate_bridge_homes, validate_companion_home
+from repeater.radio_ids import canonical_radio_id, configured_radio_ids
 from repeater.config_manager import ConfigManager
 from repeater.data_acquisition.glass_handler import GlassHandler
 from repeater.data_acquisition.gps_service import GPSService
@@ -228,6 +230,7 @@ class RepeaterDaemon:
         ``IdentityManager.validate_specs``; at this point the manager holds no
         registered identities, so this is a pure batch check.
         """
+        validate_bridge_homes(self.config)
         self._room_server_specs = self._configured_identity_specs("room_server")
         self._companion_specs = self._configured_identity_specs("companion")
         specs = [
@@ -865,8 +868,9 @@ class RepeaterDaemon:
         settings = dict(config) if isinstance(config, dict) else {}
         radio = self.radio
         if home_radio_id is not None:
+            configured_radio_ids(self.config)
             entries = {
-                entry.get("id", entry.get("radio_id")): entry
+                canonical_radio_id(entry): entry
                 for entry in self.config.get("radios", [])
             }
             if home_radio_id not in entries:
@@ -903,6 +907,7 @@ class RepeaterDaemon:
         return resolve_max_tx_power_dbm(radio, self._get_companion_radio_settings(home_radio_id))
 
     def _configure_companion_routing(self, bridge, settings):
+        validate_companion_home(self.config, settings)
         home = settings.get("home_radio_id")
         if home is not None:
             self._get_companion_radio_settings(
@@ -910,9 +915,7 @@ class RepeaterDaemon:
             )  # Reject an unknown home, never silently default.
         receive = settings.get("receive_radio_ids")
         if receive is not None:
-            known = {
-                entry.get("id", entry.get("radio_id")) for entry in self.config.get("radios", [])
-            }
+            known = set(configured_radio_ids(self.config))
             if (
                 not isinstance(receive, list)
                 or not receive
@@ -1193,6 +1196,7 @@ class RepeaterDaemon:
         name = comp_config.get("name")
         identity_key = comp_config.get("identity_key")
         settings = comp_config.get("settings") or {}
+        validate_companion_home(self.config, settings, context=f"Companion '{name}'")
 
         if not name or not identity_key:
             raise ValueError("Companion config missing name or identity_key")

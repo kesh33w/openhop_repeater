@@ -13,6 +13,7 @@ from pathlib import Path
 
 from openhop_core.protocol.constants import PAYLOAD_TYPE_GRP_TXT, PH_ROUTE_MASK, ROUTE_TYPE_FLOOD
 from openhop_core.protocol.crypto import CryptoUtils
+from repeater.radio_ids import configured_radio_ids
 
 
 @dataclass(frozen=True)
@@ -223,14 +224,16 @@ class BridgeSettings:
         }
         if set(cfg) - allowed:
             raise ValueError("Unknown channel_bridge setting")
-        radios = config.get("radios", [])
-        ids = [r.get("id") for r in radios if isinstance(r, dict)]
-        if len(ids) != 2 or any(not isinstance(r, str) or not r for r in ids) or len(set(ids)) != 2:
+        ids = configured_radio_ids(config)
+        if len(ids) != 2:
             raise ValueError("channel_bridge requires exactly two distinct named radios")
         self.radio_ids = tuple(ids)
         self.origin_home = cfg.get("origin_home")
         if self.origin_home is not None and self.origin_home not in ids:
             raise ValueError("channel_bridge.origin_home must name a configured radio")
+        from repeater.bridge_homes import validate_bridge_homes
+
+        validate_bridge_homes(config)
         channels = cfg.get("channels")
         if not isinstance(channels, dict) or not channels or len(channels) > 64:
             raise ValueError("channel_bridge requires 1 to 64 named channel keys")

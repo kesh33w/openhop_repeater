@@ -2,6 +2,7 @@
 
 import copy
 from repeater.channel_bridge import BridgeSettings
+from repeater.radio_ids import configured_radio_ids
 from repeater.config import resolve_storage_dir
 from pathlib import Path
 
@@ -41,11 +42,7 @@ def bridge_view(config, config_path=None):
     redact_bridge({"channel_bridge": section})
     return {
         "settings": section,
-        "radio_ids": [
-            r["id"]
-            for r in config.get("radios", [])
-            if isinstance(r, dict) and isinstance(r.get("id"), str)
-        ],
+        "radio_ids": list(configured_radio_ids(config)),
         "restart_required": True,
     }
 
@@ -75,6 +72,6 @@ def bridge_candidate(config, updates, config_path=None):
             raise ValueError("Channel keys must contain 32 or 64 hexadecimal characters")
     # Validate configured drafts even when disabled; a bare disable remains possible.
     if section.get("enabled") or channels or section.get("mappings"):
-        candidate = {**config, "channel_bridge": {**section, "enabled": True}}
-        BridgeSettings.from_config(candidate)
+        candidate = {**config, "channel_bridge": section}
+        BridgeSettings(candidate)
     return section

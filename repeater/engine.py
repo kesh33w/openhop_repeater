@@ -477,7 +477,11 @@ class RepeaterHandler(BaseHandler):
                 send_plan = self.channel_bridge.plan(result[0], bridge_home, policy_context)
                 if not send_plan:
                     result = None
-                    processed_packet.drop_reason = "Channel bridge has no allowed destination"
+                    processed_packet.drop_reason = (
+                        "Channel bridge requires an explicit configured home radio"
+                        if bridge_home not in self.channel_bridge.radio_ids
+                        else "Channel bridge has no allowed destination"
+                    )
                 else:
                     tx_radio_ids = tuple(send.destination.name for send in send_plan)
 

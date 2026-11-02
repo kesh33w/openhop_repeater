@@ -283,6 +283,7 @@ COMPANION_SETTINGS_ALLOWLIST = frozenset(
         "node_name",
         "tcp_port",
         "bind_address",
+        "home_radio_id",
         "tcp_timeout",
         # Persistent opt-in: trim oldest non-favourite contacts to fit max_contacts
         # at load instead of refusing to start when over capacity.

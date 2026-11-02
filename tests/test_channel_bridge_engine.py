@@ -114,7 +114,8 @@ async def test_echo_suppressed_across_restart(rig_factory):
 
 @pytest.mark.asyncio
 async def test_origin_home_is_explicit_and_missing_home_fails_closed(rig_factory):
-    rig = rig_factory(origin_home=None)
+    rig = rig_factory()
+    rig.handler.channel_bridge.origin_home = None
     assert not await rig.handler(packet(), {}, local_transmission=True)
     assert not rig.air.frames
     assert await rig.handler(packet(), {"home_radio_id": "link"}, local_transmission=True)

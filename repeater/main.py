@@ -564,12 +564,17 @@ class RepeaterDaemon:
             await self.router.start()
 
             # Private extension stays separate and imports only when explicitly enabled.
-            island = self.config.get("private_island", {})
-            if not isinstance(island, dict):
-                raise ConfigurationError("private_island must be a mapping")
-            if island.get("enabled", False) is not False:
-                from private_link.daemon import install_from_config
-                self.private_island = await install_from_config(self)
+            try:
+                island = self.config.get("private_island", {})
+                if not isinstance(island, dict):
+                    raise ConfigurationError("private_island must be a mapping")
+                if island.get("enabled", False) is not False:
+                    from private_link.daemon import install_from_config
+                    self.private_island = await install_from_config(self)
+            except Exception:
+                # The installer releases partial private resources before raising.
+                # An optional network failure must not prevent local RF startup.
+                logger.exception("Private island unavailable; continuing local RF startup")
 
             # Register router as entry point for ALL packets via fallback handler
             # All received packets flow through router → helpers → repeater engine

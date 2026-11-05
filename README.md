@@ -6,7 +6,7 @@ Start with the [Kesh OpenHop bridge project hub](https://github.com/kesh33w/kesh
 
 ## What this fork adds
 
-Native OpenHop routing runs first. For eligible group text, the bridge can repeat the original encrypted packet locally and create a separate copy for a mapped radio and channel. It authenticates and decrypts with the source channel key, then re-encrypts with the destination channel key.
+Native OpenHop routing runs first. For eligible group text, the bridge can repeat the original encrypted payload locally and create a separate copy for a mapped radio and channel. It authenticates and decrypts with the source channel key, then re-encrypts with the destination channel key.
 
 - Channel mappings are directional. Configure a reverse mapping for replies.
 - Local and crossing policies are independent. Dropping one copy does not cancel an allowed copy on the other path.

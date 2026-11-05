@@ -1,4 +1,5 @@
 from repeater.bridge_homes import BridgeHomeAssignmentError, validate_companion_home
+import asyncio
 import copy
 import json
 import logging
@@ -2663,6 +2664,44 @@ class APIEndpoints:
         except Exception as e:
             logger.error(f"Error listing web frontends: {e}")
             return self._error(str(e))
+
+    @cherrypy.expose
+    @cherrypy.tools.json_out()
+    def internet_link(self):
+        from .internet_link import inspect
+        self._set_cors_headers()
+        if cherrypy.request.method != "GET":
+            raise cherrypy.HTTPError(405)
+        if self.event_loop is None or not self.event_loop.is_running():
+            return self._error("Internet Link status is unavailable")
+        try:
+            future = asyncio.run_coroutine_threadsafe(inspect(self), self.event_loop)
+            return self._success(future.result(timeout=5))
+        except Exception:
+            logger.exception("Internet Link status could not be read")
+            return self._error("Internet Link status is unavailable")
+
+    @cherrypy.expose
+    @cherrypy.tools.json_out()
+    @cherrypy.tools.json_in()
+    def update_internet_link(self):
+        from .internet_link import update
+        self._set_cors_headers()
+        if cherrypy.request.method == "OPTIONS":
+            return ""
+        self._require_post()
+        if self.event_loop is None or not self.event_loop.is_running():
+            return self._error("Internet Link is unavailable. No settings were changed.")
+        try:
+            future = asyncio.run_coroutine_threadsafe(update(self, cherrypy.request.json), self.event_loop)
+            # A running disk write must reach a known outcome before replying.
+            if not future.result():
+                return self._error("Internet Link options could not be saved. No settings were changed.")
+            return self._success({"saved": True, "live_updated": True, "restart_required": False})
+        except (ValueError, TypeError, KeyError):
+            return self._error("Invalid Internet Link options. Check timeout and traffic limits.")
+        except Exception:
+            return self._error("Internet Link options could not be saved.")
 
     @cherrypy.expose
     @cherrypy.tools.json_out()

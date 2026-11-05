@@ -202,3 +202,13 @@ def test_invalid_direct_route_drafts_are_rejected_atomically(config, routes):
     with pytest.raises((ValueError, TypeError)):
         bridge_candidate(config, {"enabled": False, "direct_routes": routes})
     assert config == before
+
+
+def test_disabled_partial_section_always_has_editor_collections():
+    config = {'radios': [{'id': 'host-rf'}], 'channel_bridge': {'enabled': False}}
+    before = copy.deepcopy(config)
+    result = bridge_view(config)
+    assert result['settings']['channels'] == {}
+    assert result['settings']['mappings'] == []
+    assert result['settings']['direct_routes'] == []
+    assert config == before

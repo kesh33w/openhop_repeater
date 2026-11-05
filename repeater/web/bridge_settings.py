@@ -34,6 +34,8 @@ def bridge_view(config, config_path=None):
     section = copy.deepcopy(
         config.get("channel_bridge") or {"enabled": False, "channels": {}, "mappings": []}
     )
+    section.setdefault("channels", {})
+    section.setdefault("mappings", [])
     section.setdefault(
         "echo_database",
         str(Path(resolve_storage_dir(config, config_path=config_path)) / "bridge-echo.sqlite"),

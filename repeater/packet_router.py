@@ -1,5 +1,6 @@
 import asyncio
 import copy
+from contextvars import ContextVar
 import logging
 import time
 
@@ -135,6 +136,7 @@ class PacketRouter:
         self.router_task = None
         # Serialize injects so one local TX completes before the next is processed
         self._inject_lock = asyncio.Lock()
+        self._reply_home_radio = ContextVar("reply_home_radio", default=None)
         # Hash -> expiry time; skip delivering same PATH/protocol-response to companions more than once
         self._companion_delivered = {}
         # Safety valve: cap the number of _route_packet tasks sleeping concurrently.
@@ -460,6 +462,8 @@ class PacketRouter:
         ack_timeout_s: float = 5.0,
         home_radio_id=None,
     ):
+        if home_radio_id is None:
+            home_radio_id = self._reply_home_radio.get()
         dispatcher = getattr(self.daemon, "dispatcher", None)
         wait_crc = None
         ack_reservation = None
@@ -649,6 +653,15 @@ class PacketRouter:
                 logger.error(f"Router error: {e}", exc_info=True)
 
     async def _route_packet(self, packet):
+        # Replies created while handling this request return on its RF side.
+        # ContextVar also keeps delayed replies isolated across simultaneous RX.
+        token = self._reply_home_radio.set(getattr(packet, "_rx_radio_id", None))
+        try:
+            return await self._route_packet_on_radio(packet)
+        finally:
+            self._reply_home_radio.reset(token)
+
+    async def _route_packet_on_radio(self, packet):
 
         if getattr(packet, "_private_peer", False) is True:
             # Authenticated transit only: no local app/companion decrypt or RF logging.

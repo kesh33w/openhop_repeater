@@ -448,9 +448,22 @@ class RepeaterHandler(BaseHandler):
                     rx_radio_id=rx_radio_id,
                 )
 
-        if self.bridge_echoes and not local_transmission and await self.bridge_echoes.contains(packet):
-            allow_forward = False
-            policy_reason = "Channel bridge echo"
+        if self.bridge_echoes and not local_transmission:
+            try:
+                bridge_echo = await self.bridge_echoes.contains(packet)
+            except Exception as exc:
+                # An unclassified packet may be an echo. Suppress forwarding,
+                # but continue recording the real RX and its operational drop.
+                allow_forward = False
+                policy_reason = "Channel bridge echo check unavailable"
+                logger.warning(
+                    "Channel bridge echo lookup failed (%s); forwarding suppressed",
+                    type(exc).__name__,
+                )
+            else:
+                if bridge_echo:
+                    allow_forward = False
+                    policy_reason = "Channel bridge echo"
 
         direct_transit = bool(
             self.channel_bridge and self.channel_bridge.is_direct_transit(

@@ -213,3 +213,24 @@ async def test_denied_crossing_has_no_destination_companion_observation(rig_fact
     rig.handler.bridge_egress_callback=AsyncMock()
     assert await rig.handler(packet(),fabric_tests._rx('local'))
     rig.handler.bridge_egress_callback.assert_not_called()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('route', [fabric_tests.ROUTE_TYPE_FLOOD, fabric_tests.ROUTE_TYPE_DIRECT])
+async def test_bridge_own_advert_uses_both_local_radios(rig_factory, route):
+    rig = rig_factory()
+    router = fabric_tests._router_for(rig)
+    advert = fabric_tests._packet(route, fabric_tests.PAYLOAD_TYPE_ADVERT, bytes(range(1, 33)), b'')
+    assert await router.inject_packet(advert, wait_for_ack=False)
+    assert rig.air.order == ['local', 'link']
+    assert rig.air.frames[0][1] == rig.air.frames[1][1]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('home', ['local', 'link'])
+async def test_companion_advert_retains_explicit_home(rig_factory, home):
+    rig = rig_factory()
+    router = fabric_tests._router_for(rig)
+    advert = fabric_tests._packet(fabric_tests.ROUTE_TYPE_FLOOD, fabric_tests.PAYLOAD_TYPE_ADVERT, bytes(range(1, 33)), b'')
+    assert await router.inject_packet(advert, wait_for_ack=False, home_radio_id=home)
+    assert rig.air.order == [home]

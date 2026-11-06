@@ -485,8 +485,18 @@ class RepeaterHandler(BaseHandler):
                 bridge_home = self.channel_bridge.origin_home
             if result:
                 self._freeze_tx_normalisation(result[0])
-                send_plan = self.channel_bridge.plan(
-                    result[0], bridge_home, policy_context, direct_transit=direct_transit
+                homes = (bridge_home,)
+                if (local_transmission and not rx_radio_id
+                        and not metadata.get("home_radio_id")
+                        and result[0].get_payload_type() == PAYLOAD_TYPE_ADVERT):
+                    # The bridge has one advertised identity on both RF sides.
+                    # Companions keep their explicitly assigned home radio.
+                    homes = tuple(self.channel_bridge.radio_ids)
+                send_plan = tuple(
+                    send for home in homes
+                    for send in self.channel_bridge.plan(
+                        result[0], home, policy_context, direct_transit=direct_transit
+                    )
                 )
                 if not send_plan:
                     result = None

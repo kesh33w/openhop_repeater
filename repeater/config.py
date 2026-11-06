@@ -9,6 +9,8 @@ from typing import Any, Dict, Optional, overload
 
 import yaml
 
+from repeater.identity_persistence import config_for_persistence
+
 from repeater.channel_bridge import BridgeSettings
 from repeater.radio_ids import canonical_radio_id, configured_radio_ids
 from repeater.exceptions import ConfigurationError
@@ -401,7 +403,7 @@ def save_config(config_data: Dict[str, Any], config_path: Optional[str] = None) 
         )
 
     try:
-        config_data = normalize_modem_config(config_data)
+        config_data = config_for_persistence(normalize_modem_config(config_data))
         # Create backup of existing config
         config_file = Path(config_path)
         if config_file.exists():

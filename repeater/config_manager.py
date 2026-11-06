@@ -9,6 +9,8 @@ from typing import Any, Dict, List, Optional
 
 import yaml
 
+from repeater.identity_persistence import config_for_persistence
+
 from repeater.logging_utils import normalize_log_level
 from repeater.modem_config import normalize_modem_config_in_place
 
@@ -284,6 +286,7 @@ class ConfigManager:
         """Write a private candidate; the atomic replace is the commit point."""
         temporary_path = None
         try:
+            config = config_for_persistence(config)
             if normalize_modem:
                 normalize_modem_config_in_place(config)
             # Follow existing symlinks rather than replacing the link itself.

@@ -426,6 +426,9 @@ class StorageCollector:
         }
         if self.modem_status_getter is not None:
             system_stats["modem_disconnected"] = self.modem_status_getter()
+        receive_ages = getattr(self.repeater_handler, "get_rf_receive_ages", None)
+        if callable(receive_ages):
+            system_stats["rf_receive_ages"] = receive_ages()
         airtime_stats = _node_airtime_stats(self.repeater_handler)
         if airtime_stats:
             system_stats["utilization_percent"] = airtime_stats["utilization_percent"]

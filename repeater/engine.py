@@ -38,11 +38,12 @@ from openhop_core.protocol.packet_utils import (
 
 from repeater.airtime import AirtimeBudgets
 from repeater.channel_bridge import BridgeSettings, AsyncEchoLedger
-from repeater.config import fabric_origin_tx, fabric_selects_by_ingress_radio
+from repeater.config import build_radio_profiles, fabric_origin_tx, fabric_selects_by_ingress_radio
 from repeater.data_acquisition import StorageCollector
 from repeater.modem_config import normalize_modem_config, redact_modem_tokens_in_place
 from repeater.neighbour_links import NeighbourLinkTracker
 from repeater.policy_engine import PolicyDecision, PolicyEngine
+from repeater.radio_ids import configured_radio_ids
 
 logger = logging.getLogger("RepeaterHandler")
 
@@ -190,6 +191,9 @@ class RepeaterHandler(BaseHandler):
         # everything that reports a single utilisation figure reads it.
         self.airtime_budgets = AirtimeBudgets(config)
         self.airtime_mgr = self.airtime_budgets.default
+        radio_ids = tuple(row['radio_id'] for row in build_radio_profiles(config))
+        self._last_rf_receive = dict.fromkeys(radio_ids or configured_radio_ids(config) or ('radio0',))
+        self._rf_receive_subscribed = False
         self.policy_engine = PolicyEngine.from_runtime_config(config)
         self.channel_bridge = BridgeSettings.from_config(config)
         self.bridge_echoes = (
@@ -315,6 +319,10 @@ class RepeaterHandler(BaseHandler):
         # enforcement — see schedule_retransmit / delayed_send for details.
         self._tx_lock = asyncio.Lock()
 
+        subscribe = getattr(dispatcher, 'add_raw_rx_subscriber', None)
+        self._rf_receive_subscribed = callable(subscribe)
+        if self._rf_receive_subscribed:
+            subscribe(self._record_rf_receive)
         self._start_background_tasks()
 
     async def __call__(
@@ -2736,6 +2744,22 @@ class RepeaterHandler(BaseHandler):
             counts[radio_id] = int(getattr(radio, "crc_error_count", 0) or 0)
         return counts
 
+    def _record_rf_receive(self, data, rssi, snr, *, rx_radio_id=None):
+        # Only the dispatcher's hardware callback calls this. Private-link
+        # packets enter the router queue directly, even when they name a radio.
+        if rx_radio_id is None and len(self._last_rf_receive) == 1:
+            rx_radio_id = next(iter(self._last_rf_receive))
+        if rx_radio_id in self._last_rf_receive:
+            self._last_rf_receive[rx_radio_id] = time.monotonic()
+
+    def get_rf_receive_ages(self) -> list:
+        now = time.monotonic()
+        return [
+            {'radio_id': radio_id, 'seconds_since_last_rx':
+             None if received is None else max(0.0, now - received)}
+            for radio_id, received in getattr(self, '_last_rf_receive', {}).items()
+        ]
+
     def get_stats(self) -> dict:
         runtime_config = normalize_modem_config(self.config, warn=False)
         redact_modem_tokens_in_place(runtime_config)
@@ -2792,6 +2816,7 @@ class RepeaterHandler(BaseHandler):
             "uptime_seconds": uptime_seconds,
             "noise_floor_dbm": noise_floor_dbm,
             "crc_error_count": crc_error_count,
+            "rf_receive_ages": self.get_rf_receive_ages(),
             # Add configuration data
             "config": {
                 "node_name": repeater_config.get("node_name", "Unknown"),
@@ -3049,6 +3074,9 @@ class RepeaterHandler(BaseHandler):
             logger.error(f"Error reloading runtime config: {e}")
 
     def cleanup(self):
+        if getattr(self, '_rf_receive_subscribed', False):
+            self.dispatcher.remove_raw_rx_subscriber(self._record_rf_receive)
+            self._rf_receive_subscribed = False
         if self._background_task and not self._background_task.done():
             self._background_task.cancel()
             logger.info("Background timer task cancelled")

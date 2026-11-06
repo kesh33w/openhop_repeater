@@ -1020,7 +1020,7 @@ class MeshCoreToMqttPusher:
             "model": OBSERVER_SOFTWARE_NAME,
             "firmware_version": self.app_version,
             "radio": radio_config or self.radio_config,
-            "client_version": f"{OBSERVER_SOFTWARE_NAME}/{self.app_version}",
+            "client_version": f"💧 {OBSERVER_SOFTWARE_NAME}/{self.app_version}",
             "repeat": repeat_state,
             # Defaults first: a provider that reports real figures must win over
             # them. Spread after live_stats, as they were, they pinned errors to

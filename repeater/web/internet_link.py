@@ -42,7 +42,13 @@ def view(config, binding):
     # Snapshot maps only on the daemon's event loop, where enrollment changes them.
     if service is not None:
         for peer, transport in sorted(service.transports.items()):
-            peers.append({"id": peer, "connected": bool(transport.connected)})
+            peers.append({
+                "id": peer,
+                "connected": bool(transport.connected),
+                "last_valid_inbound_frame_age_seconds": getattr(
+                    transport, "last_valid_inbound_frame_age_seconds", None
+                ),
+            })
     routes = []
     if adapter is not None:
         for (peer, radio), local in sorted(adapter.config.inbound.items()):

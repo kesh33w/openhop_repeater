@@ -599,9 +599,9 @@ class _BrokerConnection:
         elapsed = (datetime.now(timezone.utc) - self._connect_time).total_seconds()
         expiry_seconds = self.jwt_expiry_minutes * 60
         # Stagger refresh by 5% per broker to prevent simultaneous disconnects
-        # Broker 0: 80%, Broker 1: 85%, Broker 2: 90%, etc.
+        # Cap at 95% so additional brokers always refresh before expiry.
         stagger_offset = self.broker_index * 0.05
-        refresh_threshold = 0.80 + stagger_offset
+        refresh_threshold = min(0.80 + stagger_offset, 0.95)
         return elapsed >= expiry_seconds * refresh_threshold
 
     def _schedule_jwt_refresh(self):
@@ -611,9 +611,9 @@ class _BrokerConnection:
 
         expiry_seconds = self.jwt_expiry_minutes * 60
         # Stagger refresh by 5% per broker to prevent simultaneous disconnects
-        # Broker 0: 80%, Broker 1: 85%, Broker 2: 90%, etc.
+        # Cap at 95% so additional brokers always refresh before expiry.
         stagger_offset = self.broker_index * 0.05
-        refresh_threshold = 0.80 + stagger_offset
+        refresh_threshold = min(0.80 + stagger_offset, 0.95)
         refresh_delay = expiry_seconds * refresh_threshold
 
         _trace(

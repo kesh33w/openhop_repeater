@@ -1,5 +1,6 @@
 import base64
 import binascii
+import copy
 import json
 import logging
 import threading
@@ -21,6 +22,7 @@ except ImportError:
     HAS_REASON_CODES = False
 
 logger = logging.getLogger("MQTTHandler")
+OBSERVER_SOFTWARE_NAME = "Kesh OpenHop Bridge"
 
 # Custom ultra-verbose level for high-frequency per-broker publish logs.
 # Keeps default DEBUG useful while allowing deep diagnostics when needed.
@@ -199,7 +201,8 @@ class _BrokerConnection:
         self.broker = broker
         self.local_identity = local_identity
         self.public_key = public_key.upper()
-        self.iata_code = iata_code
+        self.iata_code = broker.get("iata_code") or iata_code
+        self.radio_id = broker.get("radio_id") or None
         self.jwt_expiry_minutes = jwt_expiry_minutes
         self.email = email
         self.owner = owner
@@ -234,6 +237,8 @@ class _BrokerConnection:
         )
 
         client_id = f"meshcore_{self.public_key}_{broker['host']}_{self.format}"
+        if self.radio_id:
+            client_id += f"_{self.radio_id}_{self.iata_code}"
         client_kwargs = {
             "client_id": client_id,
             "transport": self.transport,
@@ -1012,10 +1017,10 @@ class MeshCoreToMqttPusher:
             "timestamp": datetime.now(timezone.utc).isoformat(),
             "origin": origin or self.node_name,
             "origin_id": self.public_key,
-            "model": "openHop-Repeater",
+            "model": OBSERVER_SOFTWARE_NAME,
             "firmware_version": self.app_version,
             "radio": radio_config or self.radio_config,
-            "client_version": f"openhop_repeater/{self.app_version}",
+            "client_version": f"{OBSERVER_SOFTWARE_NAME}/{self.app_version}",
             "repeat": repeat_state,
             # Defaults first: a provider that reports real figures must win over
             # them. Spread after live_stats, as they were, they pinned errors to
@@ -1103,6 +1108,40 @@ class MeshCoreToMqttPusher:
             logger.debug(f"Could not read per-radio telemetry for status: {exc}")
             return {}
 
+    @staticmethod
+    def _payload_for_connection(conn, subtopic: str, payload: dict):
+        """Project a radio-specific feed without treating egress as reception."""
+        if not conn.radio_id:
+            return payload
+        if subtopic in ("packets", "packet", "raw"):
+            if payload.get("rx_radio_id") != conn.radio_id:
+                return None
+            # Feed identity is separate from the actual signing public key.
+            return {**payload, "observer_radio_id": conn.radio_id}
+        if subtopic == "status":
+            selected = next((r for r in payload.get("radios", [])
+                             if r.get("id") == conn.radio_id), None)
+            if selected is None:
+                return None
+            projected = copy.deepcopy(payload)
+            projected["observer_radio_id"] = conn.radio_id
+            projected["radio"] = selected["radio"]
+            projected["radios"] = [copy.deepcopy(selected)]
+            # Uptime belongs to the shared host. Traffic counters must belong
+            # to this radio; omit unavailable values instead of using totals.
+            projected["stats"] = {
+                key: value for key, value in payload.get("stats", {}).items()
+                if key == "uptime_secs"
+            }
+            for key in ("packets_received", "packets_sent", "errors", "tx_air_secs",
+                        "rx_air_secs", "current_airtime_ms", "utilization_percent", "noise_floor"):
+                if key in selected:
+                    projected["stats"][key] = selected[key]
+            return projected
+        # Diagnostic records already carrying a radio may use the same feed.
+        # Unattributed node-wide data cannot describe one band accurately.
+        return payload if payload.get("radio_id") == conn.radio_id else None
+
     def publish(self, subtopic: str, payload: dict, retain: bool = False, qos: int = 0):
         """Publish message to all connected brokers"""
         message = json.dumps(payload)
@@ -1134,7 +1173,12 @@ class MeshCoreToMqttPusher:
                             )
                         )
                         continue
-                    result = conn.publish(subtopic, message, retain=retain, qos=qos)
+                    selected_payload = self._payload_for_connection(conn, subtopic, payload)
+                    if selected_payload is None:
+                        results.append((conn.broker["name"], "Skipped: different or unknown radio"))
+                        continue
+                    selected_message = message if selected_payload is payload else json.dumps(selected_payload)
+                    result = conn.publish(subtopic, selected_message, retain=retain, qos=qos)
                     results.append((conn.broker["name"], result))
                     _trace(f"Published to {conn.broker['name']} -- {subtopic}")
                 elif not conn.enabled:
@@ -1179,6 +1223,10 @@ class MeshCoreToMqttPusher:
                     logger.warning(
                         f"Cannot publish neighbors to {conn.broker['name']} - not connected"
                     )
+                    continue
+                selected_payload = self._payload_for_connection(conn, "neighbors", payload)
+                if selected_payload is None:
+                    results.append((conn.broker["name"], "Skipped: unattributed neighbors"))
                     continue
                 result = conn.publish("neighbors", message, retain=False, qos=1)
                 # This is by far the largest payload the node emits and it is not
@@ -1226,6 +1274,10 @@ class MeshCoreToMqttPusher:
                             f"(intentional: publish_mqtt only targets legacy mqtt format; broker format={conn.format})"
                         )
                         results.append((conn.broker["name"], None))
+                        continue
+                    selected_payload = self._payload_for_connection(conn, subtopic, payload)
+                    if selected_payload is None:
+                        results.append((conn.broker["name"], "Skipped: different or unknown radio"))
                         continue
                     result = conn.publish(subtopic, message, retain=retain, qos=qos)
                     results.append((conn.broker["name"], result))

@@ -3276,6 +3276,11 @@ class APIEndpoints:
                             None if name in stored_passwords_by_name else existing.get("password")
                         )
 
+                stored_feeds = {
+                    str(b.get("name")): b
+                    for b in (self.config.get("mqtt_brokers") or {}).get("brokers", [])
+                    if isinstance(b, dict) and b.get("name")
+                }
                 validated = []
                 for i, b in enumerate(brokers):
                     if not isinstance(b, dict):
@@ -3328,6 +3333,16 @@ class APIEndpoints:
                             "insecure": bool(b.get("tls", {}).get("insecure", False)),
                         },
                     }
+
+                    stored = stored_feeds.get(str(b.get("previous_name") or b["name"]).strip(), {})
+                    radio_id = b.get("radio_id", stored.get("radio_id")) or None
+                    if radio_id is not None:
+                        if radio_id not in configured_radio_ids(self.config):
+                            return self._error(f"Broker at index {i}: select a configured radio")
+                        new_broker["radio_id"] = radio_id
+                    iata = str(b.get("iata_code", stored.get("iata_code")) or "").strip().upper()
+                    if iata:
+                        new_broker["iata_code"] = iata
 
                     if b.get("use_jwt_auth", False):
                         new_broker["use_jwt_auth"] = True

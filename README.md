@@ -23,11 +23,11 @@ OpenHop's radio backends, dashboard, policy engine, and other inherited capabili
 
 ## Optional iLink
 
-iLink, or Internet Link, connects the Pi to Kesh's MeshCore Observer-based V4.3 TFT firmware over TLS. Kesh uses it as a temporary multibyte compatibility workaround for an older repeater in his installation.
+iLink, or Internet Link, connects the Pi to Kesh's MeshCore Observer-based V4.3 TFT and OLED firmware over TLS. Kesh uses it as a temporary multibyte compatibility workaround for an older repeater in his installation.
 
-The current sidecar and TFT admit only eligible packets with two- or three-byte path hashes on approved iLink routes. One-byte traffic stays on normal RF. Multibyte traffic also retains normal RF forwarding under its own policy. This does not provide automatic fallback selection or guaranteed delivery.
+The current sidecar and endpoints admit only eligible packets with two- or three-byte path hashes on approved iLink routes. One-byte traffic stays on normal RF. Multibyte traffic also retains normal RF forwarding under its own policy. This does not provide automatic fallback selection or guaranteed delivery.
 
-This Repeater fork contains the integration hooks and bounded Internet Link status and controls. The Python `private_link` sidecar and enrollment source live in the [project hub](https://github.com/kesh33w/kesh-openhop-bridge). The TFT firmware is a separate component, as is the OpenHop USB bench modem. Optional link failures do not prevent local RF startup.
+This Repeater fork contains the integration hooks and bounded Internet Link status and controls. The Python `private_link` sidecar and enrollment source live in the [project hub](https://github.com/kesh33w/kesh-openhop-bridge). The TFT and OLED firmware are separate components, as is the OpenHop USB bench modem. Optional link failures do not prevent local RF startup.
 
 ## Source and component boundaries
 
@@ -38,27 +38,28 @@ This Repeater fork contains the integration hooks and bounded Internet Link stat
 | Repeater UI | [openHop_RepeaterUI, kesh/bridge](https://github.com/kesh33w/openHop_RepeaterUI/tree/kesh/bridge) | Bridge configuration and Internet Link controls |
 | iLink sidecar and enrollment | [Project hub](https://github.com/kesh33w/kesh-openhop-bridge) | Python link service, enrollment, and integration tests |
 | USB bench modem | [openhop_modem, kesh/heltec-bench](https://github.com/kesh33w/openhop_modem/tree/kesh/heltec-bench) | Separate Heltec T096 and V4.3 USB bench targets |
+| V4.3 OLED iLink firmware | [MeshCore, kesh/v43-oled-ilink](https://github.com/kesh33w/MeshCore/tree/kesh/v43-oled-ilink) | Standard V4.3 OLED endpoint with phone Wi-Fi setup and enrollment |
 | V4.3 TFT iLink firmware | [MeshCore, kesh/v43-tft-ilink](https://github.com/kesh33w/MeshCore/tree/kesh/v43-tft-ilink) | MeshCore Observer-based TFT endpoint with Wi-Fi setup and enrollment |
 
 Useful implementation entry points are [channel translation and validation](repeater/channel_bridge.py), [native send handling](repeater/engine.py), [bridge settings](repeater/web/bridge_settings.py), and [Internet Link controls](repeater/web/internet_link.py). The [tests](tests) cover bridge planning, direct routes, home assignments, retries, and echo handling.
 
 ## Reconstruct and test the fork
 
-Use the hub's [pinned reconstruction workflow](https://github.com/kesh33w/kesh-openhop-bridge#reconstruct-and-test) and [components.json](https://github.com/kesh33w/kesh-openhop-bridge/blob/kesh/openhop-bridge/components.json). Active branch tips can move; the manifest records compatible public commits. Materialization checks out those exact commits without deploying services or using hardware.
+Use the hub's [pinned reconstruction workflow](https://github.com/kesh33w/kesh-openhop-bridge#reconstruct-and-test) and [components.current.json](https://github.com/kesh33w/kesh-openhop-bridge/blob/kesh/openhop-bridge/components.current.json). This is a dated source snapshot, not necessarily the latest branch tips or the software installed on a Pi. The original `components.json` remains available for historical reconstruction. Materialization checks out those exact commits without deploying services or using hardware.
 
 For a new reconstruction workspace, use Python 3.14 for the hub's recorded backend environment:
 
 ```sh
 git clone --branch kesh/openhop-bridge --single-branch https://github.com/kesh33w/kesh-openhop-bridge.git
 cd kesh-openhop-bridge
-python3 tools/materialize.py
+python3 tools/materialize.py --manifest components.current.json
 python3 -m venv .venv
 .venv/bin/pip install -r requirements-test.txt
 .venv/bin/pip install --no-deps -e sources/openhop_core -e sources/openhop_repeater
 PYTHONPATH=.:sources/openhop_core/src:sources/openhop_repeater:tools .venv/bin/python -m pytest -p bench_test_guard private_link/tests tests -q --timeout=10
 ```
 
-The hub tests use simulated radios and loopback sockets. Follow its [UI build and test instructions](https://github.com/kesh33w/kesh-openhop-bridge#repeater-ui) for the matching frontend, and the [TFT build guide](https://github.com/kesh33w/MeshCore/blob/kesh/v43-tft-ilink/OPENHOP-BRIDGE-TFT.md) for that separate firmware.
+The hub tests use simulated radios and loopback sockets. Follow its [UI build and test instructions](https://github.com/kesh33w/kesh-openhop-bridge#repeater-ui) for the matching frontend, and the [TFT build guide](https://github.com/kesh33w/MeshCore/blob/kesh/v43-tft-ilink/OPENHOP-BRIDGE-TFT.md) or [OLED build guide](https://github.com/kesh33w/MeshCore/blob/kesh/v43-oled-ilink/OPENHOP-BRIDGE-OLED.md) for the matching hardware.
 
 To inspect the latest Repeater source alone:
 

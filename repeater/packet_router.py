@@ -508,6 +508,16 @@ class PacketRouter:
             # Mark so when this packet is dequeued we don't pass to engine again (avoid double-send / double-count)
             packet._injected_for_tx = True
 
+            # Keep the transmit packet's receive metadata unchanged: a local TX
+            # is not an RF receive. The queued loopback needs its own radio
+            # association so decoded delivery applies the same isolation as raw
+            # RX. Match the engine's preference for an existing ingress radio.
+            loopback_radio_id = metadata["rx_radio_id"] or home_radio_id
+            loopback_packet = packet
+            if loopback_radio_id is not None:
+                loopback_packet = copy.copy(packet)
+                loopback_packet._rx_radio_id = loopback_radio_id
+
             # Echo this local TX to companion frame server clients as raw RX
             # (PUSH_CODE_LOG_RX_DATA 0x88, snr=0/rssi=0 = local origin) so apps that
             # decrypt locally from raw RX (e.g. RemoteTerm) see companion-originated
@@ -517,9 +527,9 @@ class PacketRouter:
             if push_rx is not None:
                 try:
                     raw = packet.write_to()
-                    if home_radio_id is not None:
+                    if loopback_radio_id is not None:
                         await push_rx(
-                            raw, 0, 0.0, exclude_hash=origin_hash, rx_radio_id=home_radio_id
+                            raw, 0, 0.0, exclude_hash=origin_hash, rx_radio_id=loopback_radio_id
                         )
                     else:
                         await push_rx(raw, 0, 0.0, exclude_hash=origin_hash)
@@ -541,7 +551,7 @@ class PacketRouter:
             # bridge, ACK/ADVERT/GRP_TXT/GRP_DATA -> every bridge except the origin.
             # The originating companion never gets its own packet back: that exclusion
             # is enforced once in _companion_bridges_for_packet via the tag set above.
-            await self.enqueue(packet)
+            await self.enqueue(loopback_packet)
 
             if wait_crc is not None:
                 try:

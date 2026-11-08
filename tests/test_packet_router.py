@@ -88,6 +88,8 @@ def _make_packet(payload_type: int = 0xFF):
     pkt.timestamp = time.time()
     pkt._injected_for_tx = False
     pkt._injected_origin_hash = None
+    pkt._rx_radio_id = None
+    pkt.rx_radio_id = None
     pkt.path = bytearray()
     pkt.calculate_packet_hash.return_value = b"\x01" * 32
     pkt.mark_do_not_retransmit = MagicMock()
@@ -1439,6 +1441,173 @@ class TestInjectedOriginExclusion(unittest.IsolatedAsyncioTestCase):
             await router.stop()
 
         self.assertEqual(bridge.get_contact_count(), 0)
+
+
+class TestInjectedHomeRadio(unittest.IsolatedAsyncioTestCase):
+    """Local decoded delivery retains the successful transmit's radio association."""
+
+    @staticmethod
+    def _packet(payload_type=PAYLOAD_TYPE_GRP_TXT):
+        pkt = Packet()
+        pkt.header = (payload_type << 2) | ROUTE_TYPE_FLOOD
+        pkt.payload = bytearray(b"example")
+        pkt.payload_len = len(pkt.payload)
+        return pkt
+
+    async def test_injected_packets_reach_only_other_same_radio_companions(self):
+        for payload_type in (
+            PAYLOAD_TYPE_GRP_TXT,
+            PAYLOAD_TYPE_GRP_DATA,
+            AdvertHandler.payload_type(),
+            AckHandler.payload_type(),
+        ):
+            with self.subTest(payload_type=payload_type):
+                daemon = _make_daemon()
+                origin, same_radio, other_radio, legacy = [_make_bridge() for _ in range(4)]
+                origin._receive_radio_ids = same_radio._receive_radio_ids = frozenset(["a"])
+                other_radio._receive_radio_ids = frozenset(["b"])
+                daemon.companion_bridges = {
+                    0x1A: origin,
+                    0x2B: same_radio,
+                    0x3C: other_radio,
+                    0x4D: legacy,
+                }
+                daemon._on_raw_rx_for_companions = AsyncMock()
+                router = PacketRouter(daemon)
+                pkt = self._packet(payload_type)
+
+                self.assertTrue(
+                    await router.inject_packet(pkt, origin_hash="0x1a", home_radio_id="a")
+                )
+                await router._route_packet(await router.queue.get())
+
+                same_radio.process_received_packet.assert_awaited_once()
+                legacy.process_received_packet.assert_awaited_once()
+                origin.process_received_packet.assert_not_awaited()
+                other_radio.process_received_packet.assert_not_awaited()
+                daemon._on_raw_rx_for_companions.assert_awaited_once_with(
+                    pkt.write_to(), 0, 0.0, exclude_hash="0x1a", rx_radio_id="a"
+                )
+                daemon.repeater_handler.assert_awaited_once()
+                self.assertIsNone(pkt._rx_radio_id)  # TX is not an RF receive.
+
+    async def test_real_companions_decrypt_local_channel_message_after_queue(self):
+        daemon = _make_daemon()
+        daemon._on_raw_rx_for_companions = AsyncMock()
+        router = PacketRouter(daemon)
+        bridges = []
+        for companion_hash, radio, key in (
+            (0x1A, "a", b"a" * 16),
+            (0x2B, "a", b"a" * 16),
+            (0x3C, "b", b"a" * 16),
+            (0x4D, "a", b"b" * 16),
+        ):
+            bridge = RepeaterCompanionBridge(
+                LocalIdentity(),
+                functools.partial(
+                    router.inject_packet, origin_hash=f"0x{companion_hash:02x}", home_radio_id=radio
+                ),
+                node_name="Bot" if companion_hash == 0x1A else "Companion",
+            )
+            bridge._receive_radio_ids = frozenset([radio])
+            self.assertTrue(bridge.set_channel(0, "Test", key))
+            daemon.companion_bridges[companion_hash] = bridge
+            bridges.append(bridge)
+        origin, same_radio, other_radio, other_key = bridges
+        await router.start()
+        try:
+            self.assertTrue(await origin.send_channel_message(0, "local loopback"))
+            for _ in range(100):
+                message = same_radio.sync_next_message()
+                if message is not None:
+                    break
+                await asyncio.sleep(0.01)
+            self.assertIsNotNone(message)
+            self.assertTrue(message.is_channel)
+            self.assertEqual(message.channel_idx, 0)
+            self.assertEqual(message.text, "Bot: local loopback")
+        finally:
+            await router.stop()
+        for bridge in (origin, same_radio, other_radio, other_key):
+            self.assertIsNone(bridge.sync_next_message())
+        daemon.repeater_handler.assert_awaited_once()
+
+    async def test_failed_injection_does_not_echo_or_queue(self):
+        daemon = _make_daemon()
+        daemon.repeater_handler.return_value = False
+        daemon._on_raw_rx_for_companions = AsyncMock()
+        router = PacketRouter(daemon)
+        pkt = self._packet()
+        self.assertFalse(await router.inject_packet(pkt, home_radio_id="a"))
+        self.assertTrue(router.queue.empty())
+        self.assertIsNone(pkt._rx_radio_id)
+        daemon._on_raw_rx_for_companions.assert_not_awaited()
+
+    async def test_inherited_home_radio_is_retained_without_tagging_transmit(self):
+        daemon = _make_daemon()
+        daemon._on_raw_rx_for_companions = AsyncMock()
+        router = PacketRouter(daemon)
+        pkt = self._packet()
+        token = router._reply_home_radio.set("a")
+        try:
+            self.assertTrue(await router.inject_packet(pkt))
+        finally:
+            router._reply_home_radio.reset(token)
+        echoed = await router.queue.get()
+        self.assertEqual(echoed._rx_radio_id, "a")
+        self.assertIsNone(pkt._rx_radio_id)
+        self.assertIsNot(echoed, pkt)
+
+    async def test_existing_ingress_radio_takes_precedence_over_home(self):
+        daemon = _make_daemon()
+        daemon._on_raw_rx_for_companions = AsyncMock()
+        router = PacketRouter(daemon)
+        pkt = self._packet()
+        pkt._rx_radio_id = "b"
+        self.assertTrue(await router.inject_packet(pkt, home_radio_id="a"))
+        echoed = await router.queue.get()
+        self.assertEqual(echoed._rx_radio_id, "b")
+        self.assertEqual(pkt._rx_radio_id, "b")
+        self.assertEqual(daemon._on_raw_rx_for_companions.call_args.kwargs["rx_radio_id"], "b")
+
+    async def test_raw_echo_failure_does_not_block_decoded_delivery(self):
+        daemon = _make_daemon()
+        daemon._on_raw_rx_for_companions = AsyncMock(side_effect=RuntimeError("client gone"))
+        recipient = _make_bridge()
+        recipient._receive_radio_ids = frozenset(["a"])
+        daemon.companion_bridges = {0x2B: recipient}
+        router = PacketRouter(daemon)
+        self.assertTrue(await router.inject_packet(self._packet(), home_radio_id="a"))
+        await router._route_packet(await router.queue.get())
+        recipient.process_received_packet.assert_awaited_once()
+        daemon.repeater_handler.assert_awaited_once()
+
+    async def test_policy_drop_still_blocks_local_decoded_delivery(self):
+        daemon = _make_daemon()
+        daemon.repeater_handler.policy_engine = PolicyEngine(
+            {"enabled": True, "default_action": "drop", "rules": []}
+        )
+        daemon._on_raw_rx_for_companions = AsyncMock()
+        recipient = _make_bridge()
+        recipient._receive_radio_ids = frozenset(["a"])
+        daemon.companion_bridges = {0x2B: recipient}
+        router = PacketRouter(daemon)
+        self.assertTrue(await router.inject_packet(self._packet(), home_radio_id="a"))
+        await router._route_packet(await router.queue.get())
+        recipient.process_received_packet.assert_not_awaited()
+        daemon.repeater_handler.assert_awaited_once()
+
+    async def test_unassigned_radio_does_not_leak_to_filtered_companion(self):
+        daemon = _make_daemon()
+        filtered, legacy = _make_bridge(), _make_bridge()
+        filtered._receive_radio_ids = frozenset(["a"])
+        daemon.companion_bridges = {0x1A: filtered, 0x2B: legacy}
+        daemon._on_raw_rx_for_companions = AsyncMock()
+        router = PacketRouter(daemon)
+        self.assertTrue(await router.inject_packet(self._packet()))
+        await router._route_packet(await router.queue.get())
+        filtered.process_received_packet.assert_not_awaited()
+        legacy.process_received_packet.assert_awaited_once()
 
 
 class TestCompanionDeliveryFailureHandling(unittest.IsolatedAsyncioTestCase):

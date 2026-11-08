@@ -748,22 +748,54 @@ class MeshCoreToMqttPusher:
                 else:
                     logger.warning(f"Skipping invalid broker config: {broker_config}")
 
-        # Create broker connections
+        # Capture restart-required identity settings once. Never silently fall
+        # back to the RF signer when a separate observer cannot be loaded.
+        self.separate_observer_identities = mqtt_brokers_config.get(
+            "separate_observer_identities", False
+        ) is not False
+        identities, self.identity_errors = {}, {}
+        if self.separate_observer_identities:
+            from .observer_identity import load_observer_identities
+
+            identities, self.identity_errors = load_observer_identities(config, self.local_identity)
+
+        # Create broker connections. A blocked feed remains visible in status,
+        # but holds no RF signer and cannot connect or refresh credentials.
         self.connections: List[_BrokerConnection] = []
         for idx, broker in enumerate(self.brokers):
+            identity, public_key, node_name = self.local_identity, self.public_key, self.node_name
+            identity_error = None
+            if self.separate_observer_identities:
+                radio_id = broker.get("radio_id")
+                observer = identities.get(radio_id)
+                identity_error = self.identity_errors.get("*") or self.identity_errors.get(radio_id)
+                if not identity_error and observer is None:
+                    identity_error = "a configured per-radio observer identity is required"
+                if observer is not None:
+                    identity, public_key, node_name = observer.identity, observer.public_key, observer.name
+                    canonical = f"meshcore/{broker.get('iata_code') or self.iata_code}/{public_key}"
+                    if broker.get("base_topic") not in (None, canonical):
+                        identity_error = "observer base_topic must match its region and public key"
+                    broker = {**broker, "base_topic": canonical}
+                if identity_error:
+                    broker = {**broker, "enabled": False}
+                    identity, public_key = None, "UNCONFIGURED"
+                    logger.error("Observer feed '%s' disabled: %s", broker["name"], identity_error)
             conn = _BrokerConnection(
                 broker=broker,
-                local_identity=self.local_identity,
-                public_key=self.public_key,
+                local_identity=identity,
+                public_key=public_key,
                 iata_code=self.iata_code,
                 jwt_expiry_minutes=self.jwt_expiry_minutes,
                 email=self.email,
                 owner=self.owner,
                 broker_index=idx,
-                node_name=self.node_name,
+                node_name=node_name,
                 on_connect_callback=self._on_broker_connected,
                 on_disconnect_callback=self._on_broker_disconnected,
             )
+            conn.observer_identity = self.separate_observer_identities
+            conn.identity_error = identity_error
             self.connections.append(conn)
 
         logger.info(f"Initialized with {len(self.connections)} broker connection(s)")
@@ -1093,7 +1125,7 @@ class MeshCoreToMqttPusher:
         except Exception as exc:  # pragma: no cover - reporting must not break status
             logger.debug(f"Could not build radio map for status: {exc}")
             return []
-        if len(entries) <= 1:
+        if len(entries) <= 1 and not any(conn.radio_id for conn in self.connections):
             return []
         telemetry = self._radio_telemetry()
         return [{**entry, **telemetry.get(entry["id"], {})} for entry in entries]
@@ -1113,10 +1145,13 @@ class MeshCoreToMqttPusher:
         """Project a radio-specific feed without treating egress as reception."""
         if not conn.radio_id:
             return payload
+        # Override observer metadata after the caller's payload so a repeater
+        # key/name in PacketRecord cannot replace the configured feed identity.
+        if getattr(conn, "observer_identity", False):
+            payload = {**payload, "origin_id": conn.public_key, "origin": conn.node_name}
         if subtopic in ("packets", "packet", "raw"):
             if payload.get("rx_radio_id") != conn.radio_id:
                 return None
-            # Feed identity is separate from the actual signing public key.
             return {**payload, "observer_radio_id": conn.radio_id}
         if subtopic == "status":
             selected = next((r for r in payload.get("radios", [])
@@ -1228,7 +1263,8 @@ class MeshCoreToMqttPusher:
                 if selected_payload is None:
                     results.append((conn.broker["name"], "Skipped: unattributed neighbors"))
                     continue
-                result = conn.publish("neighbors", message, retain=False, qos=1)
+                selected_message = message if selected_payload is payload else json.dumps(selected_payload)
+                result = conn.publish("neighbors", selected_message, retain=False, qos=1)
                 # This is by far the largest payload the node emits and it is not
                 # size-capped, so an oversized or queue-full rejection is a real
                 # outcome. Check paho's rc rather than reporting a publish that
@@ -1279,7 +1315,8 @@ class MeshCoreToMqttPusher:
                     if selected_payload is None:
                         results.append((conn.broker["name"], "Skipped: different or unknown radio"))
                         continue
-                    result = conn.publish(subtopic, message, retain=retain, qos=qos)
+                    selected_message = message if selected_payload is payload else json.dumps(selected_payload)
+                    result = conn.publish(subtopic, selected_message, retain=retain, qos=qos)
                     results.append((conn.broker["name"], result))
                     _trace(
                         f"Published to {conn.broker['name']} (format={conn.format}) -- {subtopic}"

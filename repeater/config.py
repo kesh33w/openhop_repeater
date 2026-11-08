@@ -255,6 +255,46 @@ def get_node_info(config: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
+def validate_observer_identity_config(config: dict) -> None:
+    """Validate observer references without reading or creating private keys."""
+    mqtt_config = config.get("mqtt_brokers") or {}
+    if not isinstance(mqtt_config, dict):
+        raise ValueError("mqtt_brokers must be a mapping")
+    mode = mqtt_config.get("separate_observer_identities", False)
+    if not isinstance(mode, bool):
+        raise ValueError("separate_observer_identities must be a boolean")
+    identities = mqtt_config.get("observer_identities", {})
+    if not isinstance(identities, dict):
+        raise ValueError("observer_identities must be a mapping")
+    known_radios = configured_radio_ids(config)
+    repeater_identity_count = 0
+    for radio_id, identity in identities.items():
+        if not isinstance(radio_id, str) or radio_id not in known_radios:
+            raise ValueError("observer_identities must refer to configured radio IDs")
+        if not isinstance(identity, dict) or set(identity) not in (
+            {"name", "private_key_file"}, {"name", "use_repeater_identity"}
+        ):
+            raise ValueError(
+                "Each observer identity requires name and exactly one of private_key_file "
+                "or use_repeater_identity; inline keys are forbidden"
+            )
+        name = identity["name"]
+        if not isinstance(name, str) or not name.strip() or any(ord(c) < 32 for c in name):
+            raise ValueError(
+                "Observer identity name must be a nonempty string without control characters"
+            )
+        if "use_repeater_identity" in identity:
+            if identity["use_repeater_identity"] is not True:
+                raise ValueError("use_repeater_identity must be true when selected")
+            repeater_identity_count += 1
+            if repeater_identity_count > 1:
+                raise ValueError("Only one radio may use the repeater identity")
+            continue
+        path = identity["private_key_file"]
+        if not isinstance(path, str) or not path.strip() or "\x00" in path or not Path(path).is_absolute():
+            raise ValueError("Observer private_key_file must be an absolute path")
+
+
 def load_config(config_path: Optional[str] = None) -> Dict[str, Any]:
     if config_path is None:
         config_path = os.getenv(

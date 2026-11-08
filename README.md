@@ -80,3 +80,5 @@ The hub records backend and UI checks, builds, and a bounded hardware test in wh
 This fork builds on [OpenHop Repeater](https://github.com/openhop-dev/openhop_repeater) and [OpenHop Core](https://github.com/openhop-dev/openhop_core). The inherited README is preserved in [UPSTREAM-README.md](UPSTREAM-README.md), with its original attribution and upstream links. Its screenshots and local documentation links refer to the inherited files retained here.
 
 The Repeater remains under the [MIT License](LICENSE). See the hub's [credits and licenses](https://github.com/kesh33w/kesh-openhop-bridge/blob/kesh/openhop-bridge/NOTICE.md) for the related OpenHop, MeshCore, and third-party acknowledgements.
+
+For explicit per-radio MQTT identities, see [Per-radio observer identities](docs/separate-observer-identities.md).

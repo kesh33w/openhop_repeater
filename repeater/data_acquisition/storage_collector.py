@@ -279,7 +279,40 @@ class StorageCollector:
             except Exception as e:
                 logger.debug(f"Could not read {source} for the status radio map: {e}")
 
+        self._apply_radio_packet_counters(entry)
         return radios
+
+    def _apply_radio_packet_counters(self, entry) -> None:
+        """Use physical modem counters, never router totals or channel budgets.
+
+        USB/TCP get_status only reads cached counters. Other drivers can query
+        hardware synchronously here, so do not call their status methods.
+        """
+        from openhop_core.hardware.tcp_radio import TCPLoRaRadio
+        from openhop_core.hardware.usb_radio import USBLoRaRadio
+
+        endpoints = getattr(self.repeater_handler, "_fabric_endpoints", None)
+        if not callable(endpoints):
+            return
+        try:
+            fabric, radio_ids = endpoints()
+        except Exception:
+            return
+        if fabric is None or not radio_ids:
+            return
+        for radio_id in radio_ids:
+            try:
+                radio = fabric.get_radio(radio_id)
+                if not isinstance(radio, (TCPLoRaRadio, USBLoRaRadio)):
+                    continue
+                status = radio.get_status()
+                for source, target in (("rx_count", "packets_received"), ("tx_count", "packets_sent")):
+                    value = status.get(source)
+                    if isinstance(value, int) and not isinstance(value, bool) and value >= 0:
+                        entry(radio_id)[target] = value
+            except Exception:
+                # An unavailable endpoint is unknown, not a zero counter.
+                logger.debug("Packet counters unavailable for radio %s", radio_id)
 
     @staticmethod
     def _apply_radio_airtime(per_radio: list, entry) -> None:

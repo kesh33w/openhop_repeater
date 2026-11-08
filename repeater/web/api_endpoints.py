@@ -31,7 +31,11 @@ from repeater.companion.utils import (
     trim_companion_contacts_to_fit,
     validate_companion_config_capacity,
 )
-from repeater.config import resolve_storage_dir, validate_fabric_config
+from repeater.config import (
+    resolve_storage_dir,
+    validate_fabric_config,
+    validate_observer_identity_config,
+)
 from repeater.radio_ids import canonical_radio_id, configured_radio_ids
 from repeater.web.bridge_settings import bridge_candidate, bridge_view, redact_bridge
 from repeater.handler_helpers.acl import role_name as acl_role_name
@@ -61,6 +65,19 @@ def _redact_mqtt_broker_passwords(mqtt_brokers):
     for broker in redacted.get("brokers") or []:
         if isinstance(broker, dict) and broker.get("password"):
             broker["password"] = REDACTED_CONFIG_VALUE
+    # Only references belong in config responses, never loaded or inline keys.
+    identities = redacted.get("observer_identities")
+    if "observer_identities" in redacted:
+        identities = identities if isinstance(identities, dict) else {}
+        redacted["observer_identities"] = {
+            radio_id: {
+                key: value for key, value in identity.items()
+                if (key in ("name", "private_key_file") and isinstance(value, str))
+                or (key == "use_repeater_identity" and isinstance(value, bool))
+            }
+            for radio_id, identity in identities.items()
+            if isinstance(identity, dict)
+        }
     return redacted
 
 
@@ -2827,6 +2844,11 @@ class APIEndpoints:
                             },
                             "format": conn.format,
                             "neighbors": getattr(conn, "neighbors_enabled", False),
+                            "radio_id": getattr(conn, "radio_id", None),
+                            "observer_identity": getattr(conn, "observer_identity", False),
+                            "observer_name": getattr(conn, "node_name", None),
+                            "public_key": getattr(conn, "public_key", None),
+                            "identity_error": getattr(conn, "identity_error", None),
                         }
                     )
 
@@ -2843,6 +2865,7 @@ class APIEndpoints:
             return self._success(
                 {
                     "handler_active": handler is not None,
+                    "separate_observer_identities": getattr(handler, "separate_observer_identities", False),
                     "brokers": connected_brokers,
                     "neighbors": neighbors_status,
                 }
@@ -3224,6 +3247,17 @@ class APIEndpoints:
                 return self._error("No configuration updates provided")
 
             mqtt_updates = {}
+            for key in ("separate_observer_identities", "observer_identities"):
+                if key in data:
+                    mqtt_updates[key] = copy.deepcopy(data[key])
+            candidate = {
+                **self.config,
+                "mqtt_brokers": {**(self.config.get("mqtt_brokers") or {}), **mqtt_updates},
+            }
+            try:
+                validate_observer_identity_config(candidate)
+            except ValueError as exc:
+                return self._error(str(exc))
 
             if "iata_code" in data:
                 mqtt_updates["iata_code"] = str(data["iata_code"]).strip()
@@ -3721,6 +3755,10 @@ class APIEndpoints:
                     validate_fabric_config(config_yaml)
                 except ValueError as exc:
                     add_error("fabric", str(exc))
+                try:
+                    validate_observer_identity_config(config_yaml)
+                except ValueError as exc:
+                    add_error("mqtt_brokers", str(exc))
 
             valid = len(errors) == 0
             return self._success(
@@ -9169,6 +9207,23 @@ class APIEndpoints:
                 incoming_radios = imported_config["radios"]
                 if incoming_radios is not None and not isinstance(incoming_radios, list):
                     return self._error("radios must be a list or null")
+
+            # Check observer references against the resulting radio IDs before
+            # the restore loop mutates shared config. Never load keys here.
+            prospective_observers = copy.deepcopy(self.config)
+            for section in ("radios", "mqtt_brokers", "mqtt"):
+                if section not in imported_config:
+                    continue
+                value = imported_config[section]
+                target = "mqtt_brokers" if section == "mqtt" else section
+                if isinstance(value, dict) and isinstance(prospective_observers.get(target), dict):
+                    prospective_observers[target].update(value)
+                else:
+                    prospective_observers[target] = value
+            try:
+                validate_observer_identity_config(prospective_observers)
+            except ValueError as exc:
+                return self._error(str(exc))
 
             # Fabric fan-out is only checked when the radio stack is built, so
             # an impossible combination would persist here and then refuse to

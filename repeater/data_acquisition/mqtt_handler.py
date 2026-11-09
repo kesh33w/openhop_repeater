@@ -533,13 +533,19 @@ class _BrokerConnection:
             f"({protocol}://{self.broker['host']}:{self.broker['port']}) ..."
         )
 
-        self.client.connect(self.broker["host"], self.broker["port"], keepalive=self._keepalive)
-        self.client.loop_start()
-        self._loop_running = True
+        try:
+            self.client.connect(self.broker["host"], self.broker["port"], keepalive=self._keepalive)
+            self.client.loop_start()
+            self._loop_running = True
+        except Exception as e:
+            # DNS/TLS/WebSocket failures happen before the MQTT callbacks run.
+            # Keep retrying after startup just as we do after a lost connection.
+            self._schedule_reconnect(reason=f"initial connection failed: {e}")
+            raise
 
     def disconnect(self):
         """Disconnect from broker"""
-        self._shutdown_requested = False
+        self._shutdown_requested = True
         self._running = False
         self._loop_running = False
 

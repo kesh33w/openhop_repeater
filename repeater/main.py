@@ -512,7 +512,9 @@ class RepeaterDaemon:
 
             pubkey = local_identity.get_public_key()
             self.local_hash = pubkey[0]
-            self.local_hash_bytes = bytes(pubkey[:3])
+            # Ordinary paths use 1-3 bytes, but TRACE can request 4 or 8.
+            # Keep the complete public key and let each protocol select its width.
+            self.local_hash_bytes = bytes(pubkey)
 
             logger.info(f"Local identity set: {local_identity.get_address_bytes().hex()}")
             local_hash_hex = f"0x{self.local_hash:02x}"

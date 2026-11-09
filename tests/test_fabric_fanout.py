@@ -148,7 +148,7 @@ class _Rig:
             patch("repeater.engine.RepeaterHandler._start_background_tasks"),
         ):
             self.handler = RepeaterHandler(
-                cfg, self.dispatcher, LOCAL_HASH, local_hash_bytes=bytes([LOCAL_HASH])
+                cfg, self.dispatcher, LOCAL_HASH, local_hash_bytes=bytes([LOCAL_HASH]) + bytes(range(1, 32))
             )
         # Deterministic, fast TX timing; delay randomisation is covered elsewhere.
         self.handler._calculate_tx_delay = lambda packet, snr=0.0: 0.0

@@ -146,7 +146,7 @@ async def test_runtime_claims_crossing_slot_before_awaiting_ledger(rig_factory):
 
     rig.handler.bridge_echoes.reserve = pause
     first = asyncio.create_task(rig.handler(packet(message="one"), _rx("local")))
-    await entered.wait()
+    await asyncio.wait_for(entered.wait(), timeout=2)
     assert rig.handler._bridge_pending == 1
     await rig.handler(packet(message="two"), _rx("local"))
     assert rig.air.order.count("link") == 0
@@ -390,9 +390,10 @@ async def test_runtime_releases_slot_if_reservation_is_cancelled(rig_factory):  
     rig.handler.bridge_echoes.reserve = pause
     source = packet()
     task = await rig.handler._schedule_bridge_plan(
-        source, 0, [PlannedSend(Destination("radio", "link"), source, True)]
+        source, 0, [PlannedSend(Destination("radio", "link"), source, True)],
+        source_home="local",
     )
-    await entered.wait()
+    await asyncio.wait_for(entered.wait(), timeout=2)
     assert rig.handler._bridge_pending == 1
     task.cancel()
     with pytest.raises(asyncio.CancelledError):

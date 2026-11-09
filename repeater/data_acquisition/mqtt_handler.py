@@ -199,6 +199,7 @@ class _BrokerConnection:
         on_disconnect_callback: Optional[Callable] = None,
     ):
         self.broker = broker
+        self.reception_feed = None
         self.local_identity = local_identity
         self.public_key = public_key.upper()
         self.iata_code = broker.get("iata_code") or iata_code
@@ -365,6 +366,8 @@ class _BrokerConnection:
             if self._reconnect_timer:
                 self._reconnect_timer.cancel()
                 self._reconnect_timer = None
+            if self.reception_feed is not None:
+                self.reception_feed.connected()
             if self.use_jwt_auth:
                 self._schedule_jwt_refresh()  # Schedule proactive JWT refresh
             if self._on_connect_callback:
@@ -389,6 +392,8 @@ class _BrokerConnection:
             rc = extra[0]
         rc_value = int(getattr(rc, "value", rc)) if rc is not None else -1
 
+        if self.reception_feed is not None:
+            self.reception_feed.disconnected()
         was_running = self._running
         self._running = False
 
@@ -546,6 +551,8 @@ class _BrokerConnection:
     def disconnect(self):
         """Disconnect from broker"""
         self._shutdown_requested = True
+        if self.reception_feed is not None:
+            self.reception_feed.disconnected()
         self._running = False
         self._loop_running = False
 
@@ -654,6 +661,7 @@ class MeshCoreToMqttPusher:
         jwt_expiry_minutes: int = 10,
         stats_provider: Optional[Callable[[], dict]] = None,
         radio_stats_provider: Optional[Callable[[], dict]] = None,
+        reception_evidence=None,
     ):
         self.config = config
         # Store local identity and get public key
@@ -803,6 +811,20 @@ class MeshCoreToMqttPusher:
             conn.observer_identity = self.separate_observer_identities
             conn.identity_error = identity_error
             self.connections.append(conn)
+
+        if reception_evidence is not None and reception_evidence.settings.enabled:
+            from .bridge_observer_feed import BridgeObserverFeed
+
+            # The RF signer and every local feed identity are self-reports, even
+            # when they publish under different regions or broker connections.
+            reception_evidence.exclude_identities(
+                [self.public_key] + [connection.public_key for connection in self.connections]
+            )
+            for connection in self.connections:
+                if connection.broker["name"] in {
+                    observer.broker for observer in reception_evidence.settings.observers
+                }:
+                    connection.reception_feed = BridgeObserverFeed(connection, reception_evidence)
 
         logger.info(f"Initialized with {len(self.connections)} broker connection(s)")
 

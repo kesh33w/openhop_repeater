@@ -11,11 +11,12 @@ Native OpenHop routing runs first. For eligible group text, the bridge can repea
 - Channel mappings are directional. Configure a reverse mapping for replies.
 - Local and crossing policies are independent. Dropping one copy does not cancel an allowed copy on the other path.
 - Translation accepts ordinary group text in flood packets. Signed group subtypes, direct messages, and control traffic do not use this translation path.
-- Separately enabled routes forward eligible explicit-path direct messages and acknowledgements between radios without decrypting their payloads. Endpoints need known forward and reverse contact paths. Flooded direct messages and unknown reverse-path discovery do not cross.
+- Separately enabled routes forward explicit-path direct messages and acknowledgements without decrypting them. Optional discovery and repeater-administration settings require explicit distinct peer routing and add flood path learning, encrypted requests/responses and reciprocal PATH transit. TRACE has its own SNR-progress handling. See [protocol coverage and limits](docs/bridge-protocol-routing.md).
 - Bridge sends use native radio queues and airtime accounting. Queue limits, expiry, and bounded retries distinguish known-unsent packets from uncertain transmission outcomes.
 - Durable echo reservations cover original and translated packet hashes across restarts.
+- Per-direction flood budgets bound crossing traffic without spending the other direction's budget. Optional [independent reception evidence](docs/bridge-reception-evidence.md) distinguishes modem TX confirmation from destination-side RF observation.
 - Daemon origins and companions have explicit home radios. Companion receive filters retain radio provenance.
-- Validated bridge settings require a restart. Channel keys are write-only through the settings API and are not returned in its responses.
+- Saved routing settings require a restart. Live pause/resume is persisted and applied without restart. Pausing invalidates queued crossings. Distinct-mode native local repeats continue; legacy direct routes retain their crossing-only semantics. Already-dispatched radio sends may finish. Channel keys are write-only through the settings API.
 
 The bridge requires authorized keys for both channels and handles plaintext during translation. Encryption across distinct channel keys is not end-to-end. Channel authentication does not verify an individual sender's identity.
 
@@ -82,3 +83,16 @@ This fork builds on [OpenHop Repeater](https://github.com/openhop-dev/openhop_re
 The Repeater remains under the [MIT License](LICENSE). See the hub's [credits and licenses](https://github.com/kesh33w/kesh-openhop-bridge/blob/kesh/openhop-bridge/NOTICE.md) for the related OpenHop, MeshCore, and third-party acknowledgements.
 
 For explicit per-radio MQTT identities, see [Per-radio observer identities](docs/separate-observer-identities.md).
+
+## Bridge control API
+
+All endpoints use the existing authenticated API. See the [OpenAPI contract](repeater/web/openapi.yaml) for request and response fields.
+
+- `GET /api/bridge_settings` returns redacted saved settings, the running snapshot, the current crossing pause and restart requirement. A missing daemon loop produces an explicitly unknown running comparison.
+- `POST /api/update_bridge_settings` validates and saves channel, direction, protocol and safeguard settings. It does not restart, send test traffic or change active routes. The current pause is preserved.
+- `POST /api/update_bridge_controls` with `{"paused": true}` persists a crossing pause off the radio event loop, then applies it. `false` resumes eligible new work. Persistence must succeed before the running state changes. A timed-out caller receives an unknown outcome; the accepted operation may still finish, so refresh status before another action.
+- `GET /api/bridge_diagnostics` reports running traffic budgets and bounded independent-reception evidence. No plaintext, channel keys or raw packet payloads are returned.
+
+Each mapping and protocol transit direction supports an optional `enabled` boolean, defaulting to true for existing configurations. `disabled_channels` names channels whose source or destination mappings are held without deleting keys. `protocols.discovery`, `protocols.repeater_admin` and `protocols.trace` default to false; they require `peer_routing: distinct` and use enabled transit directions. The default `legacy` mode preserves existing direct DM/ACK behavior. Changing modes requires a restart and relearning cross-network contact paths. Distinct mode separates local and crossing routes with a public route marker, not another signed peer identity. Zero-hop CONTROL discovery and adverts remain local.
+
+Observer evidence is host-configured and disabled by default. An allowlisted observer hearing a matching crossing is distinct from modem TX confirmation and never proves delivery to a particular recipient. A missing observation is unconfirmed, not a proven loss. This implementation has simulated and local UI coverage; it does not claim cross-frequency RF field validation.

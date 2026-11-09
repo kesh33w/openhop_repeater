@@ -37,7 +37,17 @@ from openhop_core.protocol.packet_utils import (
 )
 
 from repeater.airtime import AirtimeBudgets
-from repeater.channel_bridge import BridgeSettings, AsyncEchoLedger
+from repeater.bridge_evidence import ReceptionEvidence
+from repeater.bridge_protocols import (
+    append_trace_snr,
+    is_protocol_direct,
+    is_protocol_flood,
+    is_protocol_flood_candidate,
+    is_trace_transit,
+    trace_record_fields,
+)
+from repeater.bridge_traffic import DirectionalTrafficGuard
+from repeater.channel_bridge import AsyncEchoLedger, BridgeSettings
 from repeater.config import build_radio_profiles, fabric_origin_tx, fabric_selects_by_ingress_radio
 from repeater.data_acquisition import StorageCollector
 from repeater.modem_config import normalize_modem_config, redact_modem_tokens_in_place
@@ -196,6 +206,14 @@ class RepeaterHandler(BaseHandler):
         self._rf_receive_subscribed = False
         self.policy_engine = PolicyEngine.from_runtime_config(config)
         self.channel_bridge = BridgeSettings.from_config(config)
+        if self.channel_bridge:
+            self.channel_bridge.bind_routing_identity(self.local_hash_bytes)
+        self.bridge_evidence = ReceptionEvidence(
+            self.channel_bridge.evidence_settings if self.channel_bridge else None
+        )
+        self.bridge_traffic = DirectionalTrafficGuard(
+            self.channel_bridge.traffic_limits if self.channel_bridge else None
+        )
         self.bridge_echoes = (
             AsyncEchoLedger(
                 self.channel_bridge.database,
@@ -444,7 +462,7 @@ class RepeaterHandler(BaseHandler):
                 self.radio_config["coding_rate"],
                 self.radio_config["preamble_length"],
             ).score
-            if not self._is_own_echo(pkt_hash_full, original_path_hashes, rx_radio_id):
+            if not self._is_own_echo(pkt_hash_full, original_path_hashes, rx_radio_id, packet):
                 self.neighbour_link_tracker.observe(
                     packet,
                     route_type=route_type,
@@ -473,18 +491,62 @@ class RepeaterHandler(BaseHandler):
                     allow_forward = False
                     policy_reason = "Channel bridge echo"
 
+        protocols = self.channel_bridge.protocols if self.channel_bridge else {}
+        distinct_routing = bool(
+            self.channel_bridge and self.channel_bridge.peer_routing == "distinct"
+        )
+        crossing_prefix = (
+            self.channel_bridge.crossing_identity if distinct_routing else self.local_hash_bytes
+        )
+        trace_transit = bool(
+            not local_transmission and not peer_ingress and protocols.get("trace")
+            and is_trace_transit(packet, crossing_prefix)
+        )
         direct_transit = bool(
-            self.channel_bridge and self.channel_bridge.is_direct_transit(
-                packet, self.local_hash_bytes, local_transmission=local_transmission
+            self.channel_bridge and (
+                self.channel_bridge.is_direct_transit(
+                    packet, crossing_prefix, local_transmission=(
+                        local_transmission or distinct_routing and peer_ingress
+                    )
+                )
+                or (not local_transmission and not peer_ingress and is_protocol_direct(
+                    packet, crossing_prefix, protocols
+                ))
+                or trace_transit
             )
         )
+        protocol_flood = bool(
+            not local_transmission and not peer_ingress and self.channel_bridge
+            and is_protocol_flood(packet, self.local_hash_bytes, protocols, crossing_prefix)
+        )
+
+        if (distinct_routing and direct_transit and not peer_ingress and not local_transmission
+                and packet.header & PH_ROUTE_MASK == ROUTE_TYPE_DIRECT):
+            if trace_transit:
+                width = 1 << (packet.payload[8] & 3)
+                offset = 9 + packet.path_len * width
+                remaining_route = bytes(packet.payload[offset:])
+            else:
+                width = packet.get_path_hash_size()
+                remaining_route = bytes(packet.path)
+            own = {self.local_hash_bytes[:width], crossing_prefix[:width]}
+            if (len(remaining_route) >= 2 * width
+                    and remaining_route[:width] in own
+                    and remaining_route[width:2 * width] in own):
+                # A single received RF hop is represented by K or V, never both.
+                # Re-emitting to ourselves cannot advance the actual route.
+                allow_forward = False
+                policy_reason = "Consecutive bridge route hops"
 
         # Process for forwarding (skip if repeat disabled or if this is a local transmission).
         # Pass pkt_hash_full so flood_forward / direct_forward don't recompute SHA-256.
         result = (
             None
             if (not allow_forward or local_transmission)
-            else self.process_packet(processed_packet, snr, packet_hash=pkt_hash_full)
+            else self.process_packet(
+                processed_packet, snr, packet_hash=pkt_hash_full,
+                next_hop_prefix=crossing_prefix if direct_transit else self.local_hash_bytes,
+            )
         )
         forwarded_path_hashes = None
 
@@ -516,7 +578,8 @@ class RepeaterHandler(BaseHandler):
                 send_plan = tuple(
                     send for home in homes
                     for send in self.channel_bridge.plan(
-                        result[0], home, policy_context, direct_transit=direct_transit
+                        result[0], home, policy_context, direct_transit=direct_transit,
+                        protocol_flood=protocol_flood
                     )
                 )
                 if not send_plan:
@@ -591,6 +654,7 @@ class RepeaterHandler(BaseHandler):
                                 if self.channel_bridge
                                 else None
                             ),
+                            bridge_home=bridge_home,
                         ),
                     )
                 )
@@ -638,6 +702,8 @@ class RepeaterHandler(BaseHandler):
                     tx_radio_ids,
                     local_transmission=local_transmission,
                     send_plan=send_plan,
+                    bridge_home=bridge_home,
+                    bridge_source=packet if trace_transit else None,
                 )
                 try:
                     tx_result = await self._await_egress_tx(tx_task, fwd_pkt)
@@ -789,6 +855,9 @@ class RepeaterHandler(BaseHandler):
             lbt_channel_busy=lbt_channel_busy,
             packet_hash=pkt_hash_full,
         )
+
+        if payload_type == PAYLOAD_TYPE_TRACE:
+            packet_record.update(trace_record_fields(packet))
 
         # Store packet record to persistent storage
         # Skip mqtt only for invalid packets (not duplicates or operational drops)
@@ -949,7 +1018,15 @@ class RepeaterHandler(BaseHandler):
             return now - record["started"] <= self.OWN_ECHO_INFLIGHT_LIMIT_SECONDS
         return now - record["finished"] <= self.OWN_ECHO_MARGIN_SECONDS
 
-    def _is_own_echo(self, packet_hash: str, path_hashes, rx_radio_id) -> bool:
+    def _is_crossing_route_prefix(self, prefix, packet=None):
+        bridge = self.channel_bridge
+        if (not bridge or bridge.peer_routing != "distinct" or prefix is None
+                or packet is None or not is_protocol_flood_candidate(packet, bridge.protocols)):
+            return False
+        prefix = str(prefix).upper()
+        return len(prefix) in (2, 4, 6) and bridge.crossing_identity.hex().upper().startswith(prefix)
+
+    def _is_own_echo(self, packet_hash: str, path_hashes, rx_radio_id, packet=None) -> bool:
         """True when another radio of this node is hearing our own transmission.
 
         The reception must carry exactly the path we sent, arrive on a radio other
@@ -959,6 +1036,10 @@ class RepeaterHandler(BaseHandler):
         mistaken for an echo if it repeats the same packet on the same path inside
         that window.
         """
+        # V is an unsigned route marker, not an independently heard station.
+        # An unrelated prefix collision is ambiguous too; never claim a physical link.
+        if path_hashes and self._is_crossing_route_prefix(path_hashes[-1], packet):
+            return True
         if rx_radio_id is None or not path_hashes or not self._recent_own_tx:
             return False
         now = time.monotonic()
@@ -1010,7 +1091,7 @@ class RepeaterHandler(BaseHandler):
             self.radio_config["preamble_length"],
         ).score
         rx_radio_id = getattr(packet, "_rx_radio_id", None) or getattr(packet, "rx_radio_id", None)
-        if not self._is_own_echo(pkt_hash_full, original_path_hashes, rx_radio_id):
+        if not self._is_own_echo(pkt_hash_full, original_path_hashes, rx_radio_id, packet):
             self.neighbour_link_tracker.observe(
                 packet,
                 route_type=route_type,
@@ -1136,6 +1217,8 @@ class RepeaterHandler(BaseHandler):
             path_hashes=original_path_hashes,
             path_hash_size=path_hash_size,
         )
+        if self._is_crossing_route_prefix(upstream_hash, packet):
+            upstream_hash, upstream_hash_size = None, None
 
         # LoRa time-on-air for this packet (Semtech reference formula).
         # Computed once here so every downstream consumer (MQTT, SQLite, Glass,
@@ -1329,11 +1412,14 @@ class RepeaterHandler(BaseHandler):
         max_counter = max_counters[hash_size]
         hop_count = packet.get_path_hash_count()
         path = packet.path or bytearray()
-        local_hash = self.local_hash_bytes[:hash_size]
+        local_hashes = {self.local_hash_bytes[:hash_size]}
+        if (self.channel_bridge and self.channel_bridge.peer_routing == "distinct"
+                and is_protocol_flood_candidate(packet, self.channel_bridge.protocols)):
+            local_hashes.add(self.channel_bridge.crossing_identity[:hash_size])
         local_count = sum(
             1
             for i in range(hop_count)
-            if bytes(path[i * hash_size : (i + 1) * hash_size]) == local_hash
+            if bytes(path[i * hash_size : (i + 1) * hash_size]) in local_hashes
         )
         return local_count >= max_counter
 
@@ -1507,7 +1593,9 @@ class RepeaterHandler(BaseHandler):
 
         return packet
 
-    def direct_forward(self, packet: Packet, packet_hash: Optional[str] = None) -> Optional[Packet]:
+    def direct_forward(
+        self, packet: Packet, packet_hash: Optional[str] = None, *, next_hop_prefix=None
+    ) -> Optional[Packet]:
         """Forward a DIRECT packet, removing the first hop from the path.
 
         INVARIANT: purely synchronous — no await points.  The is_duplicate +
@@ -1535,7 +1623,7 @@ class RepeaterHandler(BaseHandler):
             return None
 
         next_hop = bytes(packet.path[:hash_size])
-        if next_hop != self.local_hash_bytes[:hash_size]:
+        if next_hop != (next_hop_prefix or self.local_hash_bytes)[:hash_size]:
             packet.drop_reason = DropReason.DIRECT_NOT_FOR_US
             return None
 
@@ -1557,7 +1645,8 @@ class RepeaterHandler(BaseHandler):
     MULTIPART_ACK_SPACING_MS = 300
 
     def forward_multipart_direct(
-        self, packet: Packet, snr: float = 0.0, packet_hash: Optional[str] = None
+        self, packet: Packet, snr: float = 0.0, packet_hash: Optional[str] = None,
+        *, next_hop_prefix=None
     ) -> Optional["ForwardResult"]:
         """Forward a MULTIPART packet the way MeshCore's forwardMultipartDirect does.
 
@@ -1605,7 +1694,7 @@ class RepeaterHandler(BaseHandler):
         if not packet.path or len(packet.path) < hash_size:
             packet.drop_reason = DropReason.DIRECT_NO_PATH
             return None
-        if bytes(packet.path[:hash_size]) != self.local_hash_bytes[:hash_size]:
+        if bytes(packet.path[:hash_size]) != (next_hop_prefix or self.local_hash_bytes)[:hash_size]:
             packet.drop_reason = DropReason.DIRECT_NOT_FOR_US
             return None
 
@@ -1674,7 +1763,8 @@ class RepeaterHandler(BaseHandler):
         return extras, delay_ms
 
     def forward_routed_ack(
-        self, packet: Packet, snr: float = 0.0, packet_hash: Optional[str] = None
+        self, packet: Packet, snr: float = 0.0, packet_hash: Optional[str] = None,
+        *, next_hop_prefix=None
     ) -> Optional["ForwardResult"]:
         """Relay a routed ACK the way MeshCore's routeDirectRecvAcks does.
 
@@ -1705,7 +1795,7 @@ class RepeaterHandler(BaseHandler):
         if not packet.path or len(packet.path) < hash_size:
             packet.drop_reason = DropReason.DIRECT_NO_PATH
             return None
-        if bytes(packet.path[:hash_size]) != self.local_hash_bytes[:hash_size]:
+        if bytes(packet.path[:hash_size]) != (next_hop_prefix or self.local_hash_bytes)[:hash_size]:
             packet.drop_reason = DropReason.DIRECT_NOT_FOR_US
             return None
 
@@ -1779,6 +1869,7 @@ class RepeaterHandler(BaseHandler):
         packet: Packet,
         snr: float = 0.0,
         packet_hash: Optional[str] = None,
+        *, next_hop_prefix=None,
     ) -> Optional[Tuple[Packet, float]]:
         """Route a received packet to flood_forward or direct_forward.
 
@@ -1794,8 +1885,22 @@ class RepeaterHandler(BaseHandler):
         # everything else.  Its delay is fixed by the fragment count, so return
         # the (packet, delay) pair directly instead of _calculate_tx_delay.
         payload_type = packet.get_payload_type()
+        if payload_type == PAYLOAD_TYPE_TRACE and self.channel_bridge is not None:
+            # TRACE progress is one SNR byte per hop. It must never enter the
+            # ordinary direct path-consumption or flood append routines.
+            bridge = self.channel_bridge
+            if (not bridge or not bridge.protocols.get("trace")
+                    or getattr(packet, "_private_peer", False) is True
+                    or packet.is_marked_do_not_retransmit()
+                    or self.is_duplicate(packet, packet_hash=packet_hash)
+                    or not append_trace_snr(packet, next_hop_prefix or self.local_hash_bytes, snr)):
+                packet.drop_reason = "TRACE route rejected"
+                return None
+            self.mark_seen(packet, packet_hash=packet_hash)
+            return packet, self._calculate_tx_delay(packet, snr)
+
         if payload_type == PAYLOAD_TYPE_MULTIPART:
-            return self.forward_multipart_direct(packet, snr, packet_hash=packet_hash)
+            return self.forward_multipart_direct(packet, snr, packet_hash=packet_hash, next_hop_prefix=next_hop_prefix)
 
         # Routed ACKs also get their own MeshCore branch: an intermediate direct
         # hop re-emits the ACK immediately (routeDirectRecvAcks) instead of the
@@ -1804,7 +1909,7 @@ class RepeaterHandler(BaseHandler):
             ROUTE_TYPE_DIRECT,
             ROUTE_TYPE_TRANSPORT_DIRECT,
         ):
-            return self.forward_routed_ack(packet, snr, packet_hash=packet_hash)
+            return self.forward_routed_ack(packet, snr, packet_hash=packet_hash, next_hop_prefix=next_hop_prefix)
 
         if route_type == ROUTE_TYPE_FLOOD or route_type == ROUTE_TYPE_TRANSPORT_FLOOD:
             fwd_pkt = self.flood_forward(packet, packet_hash=packet_hash)
@@ -1814,7 +1919,7 @@ class RepeaterHandler(BaseHandler):
             return fwd_pkt, delay
 
         elif route_type == ROUTE_TYPE_DIRECT or route_type == ROUTE_TYPE_TRANSPORT_DIRECT:
-            fwd_pkt = self.direct_forward(packet, packet_hash=packet_hash)
+            fwd_pkt = self.direct_forward(packet, packet_hash=packet_hash, next_hop_prefix=next_hop_prefix)
             if fwd_pkt is None:
                 return None
             delay = self._calculate_tx_delay(fwd_pkt, snr)
@@ -1929,6 +2034,8 @@ class RepeaterHandler(BaseHandler):
         preferred_tx_radio_id: Optional[str] = None,
         deadline: Optional[float] = None,
         retry_unsent: bool = False,
+        crossing_guard=None,
+        before_dispatch=None,
     ):
         """Schedule a packet retransmission with delay and return the task.
 
@@ -1965,6 +2072,10 @@ class RepeaterHandler(BaseHandler):
 
                 async with self._tx_lock:
                     if deadline is not None and time.monotonic() >= deadline:
+                        return False
+                    if crossing_guard is not None and not crossing_guard():
+                        # Checked after all waits, on every retry. A pause also
+                        # invalidates copies queued before a subsequent resume.
                         return False
                     # ── Authoritative duty-cycle gate ──────────────────────────
                     # The upfront can_transmit() call in __call__ is advisory: it
@@ -2031,6 +2142,8 @@ class RepeaterHandler(BaseHandler):
                                 kwargs.pop("radio_id")
                             except (ValueError, AttributeError):
                                 pass  # Unknown signature: try the explicit named call once.
+                        if before_dispatch is not None:
+                            before_dispatch(fwd_pkt)
                         sent = await self.dispatcher.send_packet(fwd_pkt, **kwargs)
                         metadata = getattr(fwd_pkt, "_tx_metadata", None)
                         metadata = metadata if isinstance(metadata, dict) else {}
@@ -2174,6 +2287,8 @@ class RepeaterHandler(BaseHandler):
         *,
         local_transmission: bool = False,
         send_plan=None,
+        bridge_home=None,
+        bridge_source=None,
     ):
         """Schedule a TX over the resolved egress set.
 
@@ -2183,7 +2298,9 @@ class RepeaterHandler(BaseHandler):
         """
         if send_plan is not None:
             return await self._schedule_bridge_plan(
-                fwd_pkt, delay, send_plan, local_transmission=local_transmission
+                bridge_source if bridge_source is not None else fwd_pkt,
+                delay, send_plan, local_transmission=local_transmission,
+                source_home=bridge_home,
             )
         if tx_radio_ids and len(tx_radio_ids) > 1:
             return await self.schedule_retransmit_fanout(
@@ -2201,8 +2318,11 @@ class RepeaterHandler(BaseHandler):
             preferred_tx_radio_id=tx_radio_ids[0] if tx_radio_ids else None,
         )
 
-    async def _schedule_bridge_plan(self, source, delay, plan, *, local_transmission=False):
+    async def _schedule_bridge_plan(
+        self, source, delay, plan, *, local_transmission=False, source_home=None
+    ):
         """Use native TX gating per copy; reserve echo state before dispatch."""
+        pause_generation = self.channel_bridge.pause_generation
         deadline = time.monotonic() + self.channel_bridge.queue_ttl
         if getattr(source, "_private_peer", False) is True and getattr(source, "_private_peer_deadline", None) is not None:
             deadline = min(deadline, source._private_peer_deadline)
@@ -2215,13 +2335,39 @@ class RepeaterHandler(BaseHandler):
                 pkt._path_hash_mode_applied = True
                 pkt._flood_scope_applied = True
             token = None
+            evidence_token = None
             admitted = False
+            direction_admitted = False
+
+            def begin_evidence(packet):
+                nonlocal evidence_token
+                if evidence_token is None and send.crossing:
+                    try:
+                        evidence_token = self.bridge_evidence.begin(packet, source_home, radio_id)
+                    except Exception:  # Optional diagnostics cannot block RF.
+                        logger.exception("Bridge reception tracking could not start")
+
+            def finish_evidence(outcome):
+                if evidence_token:
+                    try:
+                        self.bridge_evidence.complete(evidence_token, outcome)
+                    except Exception:  # Diagnostics cannot alter a radio outcome.
+                        logger.exception("Bridge reception tracking could not finish")
+
             try:
                 if send.crossing:
+                    if self.channel_bridge.paused:
+                        return RadioTxResult(radio_id, False, failure_reason="Bridge paused")
                     if self._bridge_pending >= self.channel_bridge.max_pending:
                         return RadioTxResult(radio_id, False, failure_reason="Bridge queue full")
                     # Claim before the first await so distinct concurrent crossings
                     # cannot overbook the configured pending limit.
+                    reason = self.bridge_traffic.admit(
+                        source_home, radio_id, is_flood=pkt.is_route_flood()
+                    )
+                    if reason:
+                        return RadioTxResult(radio_id, False, failure_reason=reason)
+                    direction_admitted = True
                     self._bridge_pending += 1
                     admitted = True
                     token = await self.bridge_echoes.reserve(source, pkt)
@@ -2237,10 +2383,18 @@ class RepeaterHandler(BaseHandler):
                     preferred_tx_radio_id=radio_id,
                     deadline=deadline,
                     retry_unsent=True,
+                    crossing_guard=(
+                        lambda: not self.channel_bridge.paused
+                        and self.channel_bridge.pause_generation == pause_generation
+                    ) if send.crossing else None,
+                    before_dispatch=begin_evidence if send.crossing else None,
                 )
                 success = bool(await task)
                 metadata = getattr(pkt, "_tx_metadata", None)
                 uncertain = isinstance(metadata, dict) and metadata.get("tx_outcome_uncertain")
+                finish_evidence(
+                    "tx_uncertain" if uncertain else "tx_confirmed" if success else "tx_failed"
+                )
                 if token and not uncertain:
                     try:
                         await self.bridge_echoes.finish(token, success=success)
@@ -2269,10 +2423,16 @@ class RepeaterHandler(BaseHandler):
                     raw_packet=pkt.write_to().hex(),
                     failure_reason=None if success else "Native TX rejected, failed, or expired",
                 )
+            except asyncio.CancelledError:
+                # A cancelled await may follow a write to the modem. Echo state
+                # remains reserved, and diagnostics must not stay pending forever.
+                finish_evidence("tx_uncertain")
+                raise
             except Exception as exc:
                 # An exception can follow an on-air write. Keep the pending echo
                 # reservation until expiry rather than pretending nothing went out.
                 logger.warning("Channel bridge TX via %s failed: %s", radio_id, exc)
+                finish_evidence("tx_uncertain")
                 return RadioTxResult(
                     radio_id,
                     False,
@@ -2283,6 +2443,8 @@ class RepeaterHandler(BaseHandler):
             finally:
                 if admitted:
                     self._bridge_pending -= 1
+                if direction_admitted:
+                    self.bridge_traffic.release(source_home, radio_id)
 
         async def run():
             return FanoutTxResult(list(await asyncio.gather(*(send_one(send) for send in plan))))

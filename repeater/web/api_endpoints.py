@@ -2746,10 +2746,64 @@ class APIEndpoints:
 
     @cherrypy.expose
     @cherrypy.tools.json_out()
-    def bridge_settings(self):
-        """Authenticated, secret-free bridge settings. Changes require restart."""
+    def bridge_diagnostics(self):
+        """Bounded, authenticated bridge status without packet bytes or secrets."""
+        from repeater.bridge_evidence import ReceptionEvidence
+        from repeater.bridge_traffic import DirectionalTrafficGuard
+
         self._set_cors_headers()
-        return self._success(bridge_view(self.config, self._config_path))
+        handler = getattr(self.daemon_instance, "repeater_handler", None)
+        evidence = getattr(handler, "bridge_evidence", None)
+        traffic = getattr(handler, "bridge_traffic", None)
+        return self._success({
+            "reception": (evidence or ReceptionEvidence()).status(),
+            "traffic": (traffic or DirectionalTrafficGuard()).status(),
+        })
+
+    @cherrypy.expose
+    @cherrypy.tools.json_out()
+    def bridge_settings(self):
+        """Authenticated saved/running configuration with no channel keys."""
+        self._set_cors_headers()
+        if cherrypy.request.method == "OPTIONS":
+            return ""
+        if cherrypy.request.method != "GET":
+            raise cherrypy.HTTPError(405)
+        from .bridge_controls import inspect, saved_snapshot
+        if self.event_loop is None or not self.event_loop.is_running():
+            result = bridge_view(saved_snapshot(self), self._config_path)
+            result.update({"controls_available": False, "running": None,
+                           "active_settings": None, "restart_required": None})
+            return self._success(result)
+        try:
+            future = asyncio.run_coroutine_threadsafe(inspect(self), self.event_loop)
+            return self._success(future.result(timeout=5))
+        except Exception:  # noqa: BLE001 - keep configuration errors secret-free
+            return self._error("Bridge status is unavailable")
+
+    @cherrypy.expose
+    @cherrypy.tools.json_out()
+    @cherrypy.tools.json_in()
+    def update_bridge_controls(self):
+        """Persist and apply the crossing pause without changing running routes."""
+        from .bridge_controls import update
+        self._set_cors_headers()
+        if cherrypy.request.method == "OPTIONS":
+            return ""
+        self._require_post()
+        if self.event_loop is None or not self.event_loop.is_running():
+            return self._error("Bridge controls are unavailable. No settings were changed.")
+        try:
+            future = asyncio.run_coroutine_threadsafe(update(self, cherrypy.request.json), self.event_loop)
+            if not future.result(timeout=5):
+                return self._error("Bridge pause could not be saved. No settings were changed.")
+            return self._success({"saved": True, "live_updated": True})
+        except (ValueError, TypeError, KeyError):
+            return self._error("Bridge pause is unavailable, already pending or invalid")
+        except Exception:  # noqa: BLE001 - outcome may be uncertain; do not echo config
+            result = self._error("Bridge pause outcome is unknown. It may still complete; refresh status before taking further action.")
+            result["outcome"] = "unknown"
+            return result
 
     @cherrypy.expose
     @cherrypy.tools.json_out()
@@ -2759,16 +2813,20 @@ class APIEndpoints:
         if cherrypy.request.method == "OPTIONS":
             return ""
         self._require_post()
-        try:
-            section = bridge_candidate(self.config, cherrypy.request.json, self._config_path)
-        except BridgeHomeAssignmentError:
-            return self._error("bridge_home_assignment_required")
-        except (ValueError, TypeError, KeyError):
-            # Never echo request data, which can contain channel keys.
-            return self._error("Invalid bridge settings. Check radios, channels, mappings and limits.")
-        result = self.config_manager.update_and_save(
-            {"channel_bridge": section}, live_update=False
-        )
+        from repeater.config_manager import _CONFIG_WRITE_LOCK
+        with _CONFIG_WRITE_LOCK:
+            try:
+                section = bridge_candidate(self.config, cherrypy.request.json, self._config_path)
+                # Pause is an independent live control. A stale editor must never
+                # resume crossings while saving unrelated channel or route edits.
+                section["paused"] = self.config.get("channel_bridge", {}).get("paused", False)
+            except BridgeHomeAssignmentError:
+                return self._error("bridge_home_assignment_required")
+            except (ValueError, TypeError, KeyError):
+                return self._error("Invalid bridge settings. Check radios, channels, mappings and limits.")
+            result = self.config_manager.update_and_save(
+                {"channel_bridge": section}, live_update=False
+            )
         if not result.get("success"):
             return self._error("Bridge settings could not be saved")
         return self._success({"saved": True, "restart_required": True})

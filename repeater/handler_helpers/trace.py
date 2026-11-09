@@ -150,6 +150,20 @@ class TraceHelper:
                     ping_info["event"].set()
                     logger.info(f"Ping response received for tag {trace_tag}")
 
+            bridge = getattr(self.repeater_handler, "channel_bridge", None)
+            protocols = getattr(bridge, "protocols", None)
+            if (isinstance(protocols, dict) and protocols.get("trace")
+                    and not self._is_trace_complete(packet, trace_bytes, hash_width)):
+                # Preserve received progress until the engine validates and
+                # schedules the crossing. It records the actual TX result once.
+                await self.repeater_handler(packet, {
+                    "rx_radio_id": (getattr(packet, "_rx_radio_id", None)
+                                    or getattr(packet, "rx_radio_id", None)),
+                    "snr": packet.get_snr(),
+                    "rssi": getattr(packet, "rssi", 0) or getattr(packet, "_rssi", 0),
+                })
+                return
+
             # Record the trace packet for dashboard/statistics
             if self.repeater_handler:
                 packet_record = self._create_trace_record(packet, parsed_data)

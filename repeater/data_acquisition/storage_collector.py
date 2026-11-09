@@ -99,6 +99,7 @@ class StorageCollector:
                     config=config,
                     stats_provider=self._get_live_stats,
                     radio_stats_provider=self._get_radio_stats,
+                    reception_evidence=getattr(repeater_handler, "bridge_evidence", None),
                 )
                 self.mqtt_handler.connect()
 

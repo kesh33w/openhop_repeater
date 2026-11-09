@@ -32,6 +32,8 @@ servers:
         description: Repeater IP address or hostname
 
 tags:
+  - name: Bridge
+    description: Channel crossings, runtime controls and independent reception evidence
   - name: Authentication
     description: User authentication and API token management
   - name: System
@@ -64,6 +66,232 @@ tags:
     description: Sensor manager — types, configuration, and readings
 
 paths:
+  /bridge_settings:
+    get:
+      tags:
+      - Bridge
+      summary: Read saved and running bridge settings
+      description: Keys are redacted in both views. restart_required compares private running and saved
+        snapshots, including key rotations. A null running or restart_required means the daemon state could
+        not be inspected.
+      security:
+      - BearerAuth: []
+      - ApiKeyAuth: []
+      responses:
+        '200':
+          description: Operation result. Check success before using data. Errors never echo supplied channel
+            keys.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  data:
+                    $ref: '#/components/schemas/BridgeRunningState'
+                  error:
+                    type: string
+                required:
+                - success
+        '401':
+          description: Authentication required
+  /update_bridge_settings:
+    post:
+      tags:
+      - Bridge
+      summary: Save bridge configuration for restart
+      description: Validates all directions, channel keys and limits before saving. Does not transmit, restart,
+        or apply settings to the running bridge. Preserves the current live pause even if a stale editor
+        submits a different paused value. Use update_bridge_controls for live pause.
+      security:
+      - BearerAuth: []
+      - ApiKeyAuth: []
+      responses:
+        '200':
+          description: Operation result. Check success before using data. Errors never echo supplied channel
+            keys.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  data:
+                    type: object
+                    properties:
+                      saved:
+                        type: boolean
+                      restart_required:
+                        type: boolean
+                  error:
+                    type: string
+                required:
+                - success
+        '401':
+          description: Authentication required
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/BridgeConfiguration'
+  /update_bridge_controls:
+    post:
+      tags:
+      - Bridge
+      summary: Pause or resume bridge crossings
+      description: Persists only the pause flag off the radio loop, then applies it on the daemon loop.
+        Local group repeating and distinct-mode native local routing continue. Legacy direct transit
+        retains crossing-only semantics and has no local fallback while paused. Queued crossings are
+        invalidated on pause; an already-dispatched transmission may finish. Does not apply pending
+        route, key or protocol edits.
+      security:
+      - BearerAuth: []
+      - ApiKeyAuth: []
+      responses:
+        '200':
+          description: Operation result. Check success before using data. Errors never echo supplied channel
+            keys.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  data:
+                    type: object
+                    properties:
+                      saved:
+                        type: boolean
+                      live_updated:
+                        type: boolean
+                  error:
+                    type: string
+                  outcome:
+                    type: string
+                    enum: [unknown]
+                    description: The accepted operation may still complete; refresh status before another action.
+                required:
+                - success
+        '401':
+          description: Authentication required
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                paused:
+                  type: boolean
+              required:
+              - paused
+              additionalProperties: false
+  /bridge_diagnostics:
+    get:
+      tags:
+      - Bridge
+      summary: Read crossing traffic and reception evidence
+      description: Bounded process-local diagnostics. Modem-confirmed TX is distinct from reception by an
+        allowlisted independent observer. Neither proves recipient delivery. Missing observation is unconfirmed,
+        not proof of failure.
+      security:
+      - BearerAuth: []
+      - ApiKeyAuth: []
+      responses:
+        '200':
+          description: Operation result. Check success before using data. Errors never echo supplied channel
+            keys.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  data:
+                    $ref: '#/components/schemas/BridgeDiagnostics'
+                  error:
+                    type: string
+                required:
+                - success
+        '401':
+          description: Authentication required
+  /internet_link:
+    get:
+      tags:
+      - Bridge
+      summary: Read Internet Link status
+      description: Secret-free listener, approved peer, route and live traffic-limit status. A connected
+        session and recent inbound frame do not prove RF or recipient delivery.
+      security:
+      - BearerAuth: []
+      - ApiKeyAuth: []
+      responses:
+        '200':
+          description: Operation result. Check success before using data. Errors never echo supplied channel
+            keys.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  data:
+                    $ref: '#/components/schemas/InternetLinkState'
+                  error:
+                    type: string
+                required:
+                - success
+        '401':
+          description: Authentication required
+  /update_internet_link:
+    post:
+      tags:
+      - Bridge
+      summary: Update live Internet Link traffic limits
+      description: Requires a running listener. Persists and applies traffic limits without restart; does
+        not edit endpoint addresses, certificates, peers or trust.
+      security:
+      - BearerAuth: []
+      - ApiKeyAuth: []
+      responses:
+        '200':
+          description: Operation result. Check success before using data. Errors never echo supplied channel
+            keys.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  data:
+                    type: object
+                    properties:
+                      saved:
+                        type: boolean
+                      live_updated:
+                        type: boolean
+                      restart_required:
+                        type: boolean
+                  error:
+                    type: string
+                required:
+                - success
+        '401':
+          description: Authentication required
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/InternetLinkOptions'
+
   # ============================================================================
   # Authentication Endpoints
   # ============================================================================
@@ -5991,6 +6219,350 @@ components:
                 type: string
                 enum: [unknown]
   schemas:
+    BridgeDirection:
+      type: object
+      properties:
+        source_radio:
+          type: string
+        target_radio:
+          type: string
+        enabled:
+          type: boolean
+          default: true
+      required:
+      - source_radio
+      - target_radio
+    BridgeMapping:
+      type: object
+      properties:
+        source_radio:
+          type: string
+        target_radio:
+          type: string
+        enabled:
+          type: boolean
+          default: true
+        source_channel:
+          type: string
+        target_channel:
+          type: string
+      required:
+      - source_radio
+      - target_radio
+      - source_channel
+      - target_channel
+    BridgeTrafficLimits:
+      type: object
+      properties:
+        per_minute:
+          type: integer
+          minimum: 1
+          maximum: 600
+          default: 12
+        burst:
+          type: integer
+          minimum: 1
+          maximum: 100
+          default: 3
+        max_pending_per_direction:
+          type: integer
+          minimum: 1
+          maximum: 1000
+          default: 16
+    BridgeConfiguration:
+      type: object
+      properties:
+        enabled:
+          type: boolean
+        paused:
+          type: boolean
+        origin_home:
+          type: string
+        disabled_channels:
+          type: array
+          items:
+            type: string
+        channels:
+          type: object
+          additionalProperties:
+            type: string
+          description: Responses contain only *** REDACTED ***. Updates may retain that marker for an existing
+            channel or replace with 32/64 hexadecimal characters.
+        mappings:
+          type: array
+          items:
+            $ref: '#/components/schemas/BridgeMapping'
+        direct_routes:
+          type: array
+          items:
+            $ref: '#/components/schemas/BridgeDirection'
+        peer_routing:
+          type: string
+          enum: [legacy, distinct]
+          default: legacy
+          description: Distinct separates native local hops from a public crossing route identifier. New protocols require distinct. Changing mode requires restart and rediscovery of cross-network contact paths.
+        protocols:
+          type: object
+          description: New protocols require peer_routing distinct; they are rejected in legacy mode.
+          properties:
+            discovery:
+              type: boolean
+              default: false
+            repeater_admin:
+              type: boolean
+              default: false
+            trace:
+              type: boolean
+              default: false
+        traffic_limits:
+          $ref: '#/components/schemas/BridgeTrafficLimits'
+        reception_evidence:
+          type: object
+          readOnly: true
+          description: Host-configured independent observer allowlist. The settings API rejects this field in updates; no secret credentials are included.
+        echo_database:
+          type: string
+          description: Host-managed absolute path; cannot be changed by this endpoint.
+        echo_ttl_seconds:
+          type: integer
+        echo_capacity:
+          type: integer
+        max_pending_crossings:
+          type: integer
+          minimum: 1
+          maximum: 1000
+        queue_ttl_seconds:
+          type: integer
+          minimum: 1
+          maximum: 120
+        local_policy:
+          type: object
+        crossing_policy:
+          type: object
+    BridgeRunningState:
+      type: object
+      properties:
+        crossing_route_id:
+          type: string
+          nullable: true
+          pattern: '^[0-9a-f]{64}$'
+          description: Running distinct-mode public routing identifier. It is not a signed endpoint identity or credential; use the prefix matching the route width.
+        settings:
+          $ref: '#/components/schemas/BridgeConfiguration'
+        active_settings:
+          allOf:
+          - $ref: '#/components/schemas/BridgeConfiguration'
+          nullable: true
+        radio_ids:
+          type: array
+          items:
+            type: string
+        running:
+          type: boolean
+          nullable: true
+        paused:
+          type: boolean
+        controls_available:
+          type: boolean
+        control_pending:
+          type: boolean
+          description: An accepted pause change is still persisting or awaiting runtime publication. Do not submit another control yet.
+        restart_required:
+          type: boolean
+          nullable: true
+        pending_crossings:
+          type: integer
+    BridgeDiagnostics:
+      type: object
+      properties:
+        reception:
+          type: object
+          properties:
+            enabled:
+              type: boolean
+            window_seconds:
+              type: integer
+            meaning:
+              type: string
+            counts:
+              type: object
+              additionalProperties:
+                type: integer
+            feeds:
+              type: array
+              items:
+                type: object
+                properties:
+                  broker:
+                    type: string
+                  state:
+                    type: string
+                  accepted:
+                    type: integer
+                  ignored:
+                    type: integer
+                  last_report_at:
+                    type: string
+                    format: date-time
+                    nullable: true
+            recent:
+              type: array
+              items:
+                type: object
+                properties:
+                  id:
+                    type: string
+                  source_radio:
+                    type: string
+                  target_radio:
+                    type: string
+                  packet_type:
+                    type: integer
+                  tx_state:
+                    type: string
+                    enum:
+                    - pending
+                    - tx_confirmed
+                    - tx_failed
+                    - tx_uncertain
+                  reception_state:
+                    type: string
+                    enum:
+                    - waiting
+                    - observed
+                    - unconfirmed
+                    - not_applicable
+                  started_at:
+                    type: string
+                    format: date-time
+                  deadline:
+                    type: string
+                    format: date-time
+                  observers:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        public_key:
+                          type: string
+                        broker:
+                          type: string
+                        radio_id:
+                          type: string
+                        observed_at:
+                          type: string
+                          format: date-time
+                        received_at:
+                          type: string
+                          format: date-time
+                        match:
+                          type: string
+                          enum:
+                          - outgoing_bytes
+                          - downstream_flood_path
+                          - trace_progress
+                        trace_progress:
+                          type: integer
+        traffic:
+          type: object
+          properties:
+            limits:
+              $ref: '#/components/schemas/BridgeTrafficLimits'
+            directions:
+              type: array
+              items:
+                type: object
+                properties:
+                  source_radio:
+                    type: string
+                  target_radio:
+                    type: string
+                  pending:
+                    type: integer
+                  admitted:
+                    type: integer
+                  rate_limited:
+                    type: integer
+                  queue_full:
+                    type: integer
+    InternetLinkOptions:
+      type: object
+      properties:
+        send_timeout:
+          type: number
+          exclusiveMinimum: true
+          minimum: 0
+          maximum: 5
+        max_inflight:
+          type: integer
+          minimum: 1
+          maximum: 64
+        max_rx_tasks:
+          type: integer
+          minimum: 1
+          maximum: 64
+    InternetLinkState:
+      type: object
+      properties:
+        enabled:
+          type: boolean
+        running:
+          type: boolean
+        listening:
+          type: boolean
+        editable:
+          type: boolean
+        enrollment_available:
+          type: boolean
+        listener_port:
+          type: integer
+          nullable: true
+        node_id:
+          type: string
+          nullable: true
+        settings:
+          $ref: '#/components/schemas/InternetLinkOptions'
+        active_settings:
+          allOf:
+          - $ref: '#/components/schemas/InternetLinkOptions'
+          nullable: true
+        packet_ttl_ms:
+          type: integer
+        pending_rf:
+          type: integer
+        dropped_tasks:
+          type: integer
+        transport_failures:
+          type: integer
+        peers:
+          type: array
+          items:
+            type: object
+            properties:
+              id:
+                type: string
+              connected:
+                type: boolean
+              last_valid_inbound_frame_age_seconds:
+                type: number
+                nullable: true
+        routes:
+          type: array
+          items:
+            type: object
+            properties:
+              direction:
+                type: string
+                enum:
+                - inbound
+                - outbound
+              peer:
+                type: string
+              radio:
+                type: string
+              local_radio:
+                type: string
+
 
     SensorMetricDescriptor:
       type: object

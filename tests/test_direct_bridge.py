@@ -26,7 +26,7 @@ ROUTES = [
 ]
 
 
-def direct(width=1, kind=PAYLOAD_TYPE_TXT_MSG, *, suffix=True, payload=b"opaque ciphertext"):
+def direct(width=1, kind=PAYLOAD_TYPE_TXT_MSG, *, suffix=True, payload=b"opaque ciphertext!!!"):
     prefix = bytes([LOCAL_HASH, 0x12, 0x34])[:width]
     path = prefix + (bytes([0xCC]) * width if suffix else b"")
     p = _direct(payload=payload, path=path, payload_type=kind)

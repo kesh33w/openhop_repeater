@@ -15,16 +15,11 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from openhop_core.protocol.constants import (
-    PAYLOAD_TYPE_ACK,
     PAYLOAD_TYPE_GRP_TXT,
-    PAYLOAD_TYPE_MULTIPART,
-    PAYLOAD_TYPE_TXT_MSG,
     PH_ROUTE_MASK,
-    ROUTE_TYPE_DIRECT,
     ROUTE_TYPE_FLOOD,
 )
 from openhop_core.protocol.crypto import CryptoUtils
-from openhop_core.protocol.packet_utils import PathUtils
 
 from repeater.radio_ids import configured_radio_ids
 
@@ -64,6 +59,7 @@ class Crossing:
     target: Destination
     source_channel: str
     target_channel: str
+    enabled: bool = True
 
 
 @dataclass(frozen=True)
@@ -137,7 +133,7 @@ class ChannelBridge:
             return tuple(sends)
         source, plain = authenticated
         for rule in self.crossings:
-            if rule.source != home or rule.source_channel != source.name:
+            if not rule.enabled or rule.source != home or rule.source_channel != source.name:
                 continue
             target = self.channels[rule.target_channel]
             outgoing = copy.deepcopy(packet)
@@ -266,9 +262,11 @@ class AsyncEchoLedger:
             except BaseException:
                 self._pending -= 1
                 raise
+
         def finished(_):
             with self._lock:
                 self._pending -= 1
+
         future.add_done_callback(finished)
         return future
 
@@ -325,6 +323,12 @@ class BridgeSettings:
         cfg = config["channel_bridge"]
         allowed = {
             "enabled",
+            "paused",
+            "disabled_channels",
+            "protocols",
+            "peer_routing",
+            "reception_evidence",
+            "traffic_limits",
             "channels",
             "mappings",
             "direct_routes",
@@ -339,6 +343,34 @@ class BridgeSettings:
         }
         if set(cfg) - allowed:
             raise ValueError("Unknown channel_bridge setting")
+        from repeater.bridge_evidence import EvidenceSettings
+        from repeater.bridge_traffic import TrafficLimits
+
+        self.evidence_settings = EvidenceSettings.from_config(config)
+        self.traffic_limits = TrafficLimits.from_config(cfg.get("traffic_limits", {}))
+        self.config_snapshot = copy.deepcopy(cfg)
+        self.paused = cfg.get("paused", False)
+        self.pause_generation = 0
+        if type(self.paused) is not bool:
+            raise ValueError("channel_bridge.paused must be a boolean")
+        protocols = cfg.get("protocols", {})
+        protocol_names = {"discovery", "repeater_admin", "trace"}
+        if (
+            not isinstance(protocols, dict)
+            or set(protocols) - protocol_names
+            or any(type(value) is not bool for value in protocols.values())
+        ):
+            raise ValueError("Invalid channel_bridge.protocols")
+        self.protocols = {name: protocols.get(name, False) for name in protocol_names}
+        self.peer_routing = cfg.get("peer_routing", "legacy")
+        if self.peer_routing not in ("legacy", "distinct"):
+            raise ValueError("channel_bridge.peer_routing must be legacy or distinct")
+        if any(self.protocols.values()) and self.peer_routing != "distinct":
+            raise ValueError(
+                "New bridge protocols require distinct peer routing and contact rediscovery"
+            )
+        self.native_identity = None
+        self.crossing_identity = None
         ids = configured_radio_ids(config)
         if len(ids) != 2:
             raise ValueError("channel_bridge requires exactly two distinct named radios")
@@ -353,15 +385,24 @@ class BridgeSettings:
         if not isinstance(routes, list) or len(routes) > len(ids):
             raise ValueError("channel_bridge.direct_routes must be a bounded list")
         self.direct_routes = {}
+        seen_routes = set()
         for rule in routes:
-            if not isinstance(rule, dict) or set(rule) != {"source_radio", "target_radio"}:
+            if (
+                not isinstance(rule, dict)
+                or set(rule) - {"source_radio", "target_radio", "enabled"}
+                or not {"source_radio", "target_radio"} <= set(rule)
+                or type(rule.get("enabled", True)) is not bool
+            ):
                 raise ValueError("Invalid channel_bridge direct route fields")
             source, target = rule["source_radio"], rule["target_radio"]
             if source not in ids or target not in ids or source == target:
                 raise ValueError("Direct routes require distinct configured radios")
-            if source in self.direct_routes:
+            if source in seen_routes:
                 raise ValueError("Direct routes require one destination per source radio")
-            self.direct_routes[source] = target
+            seen_routes.add(source)
+            if rule.get("enabled", True):
+                self.direct_routes[source] = target
+        self.configured_direct_sources = frozenset(seen_routes)
         channels = cfg.get("channels", {})
         if not isinstance(channels, dict) or len(channels) > 64 or (not channels and not routes):
             raise ValueError("channel_bridge requires named channel keys or direct routes")
@@ -371,17 +412,32 @@ class BridgeSettings:
             raise ValueError(
                 "channel_bridge channel keys must be 16 or 32 byte hex strings"
             ) from None
+        disabled = cfg.get("disabled_channels", [])
+        if (
+            not isinstance(disabled, list)
+            or any(not isinstance(name, str) for name in disabled)
+            or len(set(disabled)) != len(disabled)
+            or set(disabled) - channels.keys()
+        ):
+            raise ValueError("Disabled channels must name distinct configured channels")
+        self.disabled_channels = frozenset(disabled)
         mappings = cfg.get("mappings", [])
         if not isinstance(mappings, list) or len(mappings) > 128:
             raise ValueError("channel_bridge.mappings must be a bounded list")
         crossings = []
         for rule in mappings:
-            if not isinstance(rule, dict) or set(rule) != {
+            required = {
                 "source_radio",
                 "target_radio",
                 "source_channel",
                 "target_channel",
-            }:
+            }
+            if (
+                not isinstance(rule, dict)
+                or not required <= set(rule)
+                or set(rule) - (required | {"enabled"})
+                or type(rule.get("enabled", True)) is not bool
+            ):
                 raise ValueError("Invalid channel_bridge mapping fields")
             if rule["source_radio"] not in ids or rule["target_radio"] not in ids:
                 raise ValueError("Unknown radio in channel_bridge mapping")
@@ -391,6 +447,9 @@ class BridgeSettings:
                     Destination("radio", rule["target_radio"]),
                     rule["source_channel"],
                     rule["target_channel"],
+                    rule.get("enabled", True)
+                    and rule["source_channel"] not in self.disabled_channels
+                    and rule["target_channel"] not in self.disabled_channels,
                 )
             )
         self.planner = ChannelBridge(parsed, crossings)
@@ -436,30 +495,41 @@ class BridgeSettings:
             raise ValueError("channel_bridge.enabled must be a boolean")
         return cls(config) if cfg.get("enabled", False) else None
 
+    def bind_routing_identity(self, public_key):
+        """Bind the daemon identity without adding secrets to saved settings."""
+        from repeater.bridge_protocols import crossing_route_identity
+
+        self.native_identity = bytes(public_key)
+        self.crossing_identity = (
+            crossing_route_identity(public_key)
+            if self.peer_routing == "distinct"
+            else self.native_identity
+        )
+
     @staticmethod
     def is_direct_transit(packet, local_prefix, *, local_transmission=False):
         """Capture received next-hop eligibility before native routing consumes it."""
-        if local_transmission or packet.header & PH_ROUTE_MASK != ROUTE_TYPE_DIRECT:
-            return False
-        if not PathUtils.is_valid_path_len(packet.path_len):
-            return False
-        width, count = packet.get_path_hash_size(), packet.get_path_hash_count()
-        if not count or len(packet.path) != width * count:
-            return False
-        if bytes(packet.path[:width]) != bytes(local_prefix[:width]):
-            return False
-        kind = packet.get_payload_type()
-        if kind in (PAYLOAD_TYPE_TXT_MSG, PAYLOAD_TYPE_ACK):
-            return True
-        payload = packet.payload or b""
-        return (
-            kind == PAYLOAD_TYPE_MULTIPART
-            and len(payload) >= 5
-            and payload[0] & 0x0F == PAYLOAD_TYPE_ACK
-        )
+        from repeater.bridge_protocols import is_legacy_direct
 
-    def plan(self, packet, home, context, *, direct_transit=False):
+        return not local_transmission and is_legacy_direct(packet, local_prefix)
+
+    def set_paused(self, paused):
+        """Apply a persisted pause on the event loop and invalidate queued crossings."""
+        if type(paused) is not bool:
+            raise ValueError("channel_bridge.paused must be a boolean")
+        if paused and not self.paused:
+            self.pause_generation += 1
+        self.paused = paused
+        self.config_snapshot["paused"] = paused
+
+    def plan(self, packet, home, context, *, direct_transit=False, protocol_flood=False):
         if home not in self.radio_ids:
+            return ()
+        if (
+            direct_transit
+            and (self.peer_routing == "distinct" or home in self.configured_direct_sources)
+            and (self.paused or home not in self.direct_routes)
+        ):
             return ()
         if direct_transit and home in self.direct_routes:
             sends = (
@@ -467,8 +537,31 @@ class BridgeSettings:
                     Destination("radio", self.direct_routes[home]), copy.deepcopy(packet), True
                 ),
             )
+        elif protocol_flood and home in self.direct_routes:
+            sends = (PlannedSend(Destination("radio", home), copy.deepcopy(packet), False),)
+            if not self.paused:
+                crossed = copy.deepcopy(packet)
+                if self.peer_routing == "distinct":
+                    width = crossed.get_path_hash_size()
+                    # Replace only the native hop this forwarding decision added.
+                    # The peer payload and all earlier route entries stay intact.
+                    if (
+                        self.crossing_identity is None
+                        or self.native_identity is None
+                        or len(crossed.path) < width
+                        or bytes(crossed.path[-width:]) != self.native_identity[:width]
+                    ):
+                        crossed = None
+                    else:
+                        crossed.path[-width:] = self.crossing_identity[:width]
+                if crossed is not None:
+                    sends += (
+                        PlannedSend(Destination("radio", self.direct_routes[home]), crossed, True),
+                    )
         else:
-            sends = self.planner.plan(packet, Destination("radio", home))
+            sends = self.planner.plan(
+                packet, Destination("radio", home), allow_crossing=not self.paused
+            )
         allowed = []
         for send in sends:
             policy = self.crossing_policy if send.crossing else self.local_policy

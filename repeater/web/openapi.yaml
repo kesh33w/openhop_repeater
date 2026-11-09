@@ -1774,6 +1774,58 @@ paths:
   # ============================================================================
   # CAD Calibration Endpoints
   # ============================================================================
+  /cad_radios:
+    get:
+      tags: [CAD Calibration]
+      summary: List physical radios and current CAD settings
+      description: Read-only radio discovery. Includes default_radio_id, active_radio_id and running; does not perform CAD.
+      responses:
+        '200':
+          description: Radio selection and session state
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  data:
+                    type: object
+                    properties:
+                      default_radio_id:
+                        type: string
+                        nullable: true
+                      active_radio_id:
+                        type: string
+                        nullable: true
+                      running:
+                        type: boolean
+                      radios:
+                        type: array
+                        items:
+                          type: object
+                          properties:
+                            radio_id:
+                              type: string
+                            label:
+                              type: string
+                            supports_cad:
+                              type: boolean
+                            frequency:
+                              type: number
+                            spreading_factor:
+                              type: integer
+                            bandwidth:
+                              type: integer
+                            coding_rate:
+                              type: integer
+                            current_cad_peak:
+                              type: integer
+                            current_cad_min:
+                              type: integer
+                            cad_symbol_num:
+                              type: integer
+
   /cad_calibration_start:
     post:
       tags: [CAD Calibration]
@@ -1786,6 +1838,9 @@ paths:
             schema:
               type: object
               properties:
+                radio_id:
+                  type: string
+                  description: Physical radio ID. Omitted or blank selects the default radio; unknown IDs are rejected.
                 samples:
                   type: integer
                   default: 8
@@ -1821,6 +1876,16 @@ paths:
     post:
       tags: [CAD Calibration]
       summary: Stop CAD calibration
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                radio_id:
+                  type: string
+                  description: If supplied, must match the active calibration radio.
       responses:
         '200':
           description: Calibration stopped
@@ -1841,6 +1906,9 @@ paths:
             schema:
               type: object
               properties:
+                radio_id:
+                  type: string
+                  description: Physical radio ID. Omitted or blank selects the default radio; unknown IDs are rejected.
                 samples:
                   type: integer
                   minimum: 1
@@ -1930,6 +1998,9 @@ paths:
               type: object
               required: [peak, min_val]
               properties:
+                radio_id:
+                  type: string
+                  description: Physical radio ID. Omitted or blank selects the default radio; unknown IDs are rejected.
                 peak:
                   type: integer
                   minimum: 0
@@ -1960,6 +2031,13 @@ paths:
       tags: [CAD Calibration]
       summary: CAD calibration SSE stream
       description: Server-Sent Events stream of calibration progress
+      parameters:
+        - name: radio_id
+          in: query
+          required: false
+          schema:
+            type: string
+          description: Physical radio to stream. Replays its latest session; every event identifies its radio.
       responses:
         '200':
           description: SSE stream

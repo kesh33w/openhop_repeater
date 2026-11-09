@@ -4,6 +4,8 @@ import threading
 import time
 from typing import Any, Dict, Optional, Tuple
 
+from repeater.cad_radio import radio_config, resolve_cad_radio
+
 logger = logging.getLogger("HTTPServer")
 
 
@@ -18,6 +20,65 @@ class CADCalibrationEngine:
         self.clients = set()  # SSE clients
         self.calibration_thread = None
         self.session_config: dict[str, Any] = {}
+        self.control_lock = threading.RLock()
+        self.radio_id = None
+        self.session_radio = None
+        self.manual_running = False
+        self._pending_lock = threading.Lock()
+        self._pending_checks = set()
+        self._checks_in_flight = 0
+
+    @property
+    def calibration_busy(self):
+        with self._pending_lock:
+            pending = bool(self._pending_checks) or self._checks_in_flight > 0
+        return (
+            self.running
+            or pending
+            or bool(self.calibration_thread and self.calibration_thread.is_alive())
+        )
+
+    @property
+    def busy(self):
+        return self.manual_running or self.calibration_busy
+
+    async def _tracked_cad_test(self, *args, **kwargs):
+        with self._pending_lock:
+            self._checks_in_flight += 1
+        try:
+            return await self.test_cad_config(*args, **kwargs)
+        finally:
+            with self._pending_lock:
+                self._checks_in_flight -= 1
+
+    def _submit_cad_test(self, *args, **kwargs):
+        future = asyncio.run_coroutine_threadsafe(
+            self._tracked_cad_test(*args, **kwargs), self.event_loop
+        )
+        with self._pending_lock:
+            self._pending_checks.add(future)
+
+        def discard(done):
+            with self._pending_lock:
+                self._pending_checks.discard(done)
+
+        future.add_done_callback(discard)
+        return future
+
+    def _wait_cad_result(self, future, timeout):
+        try:
+            return future.result(timeout=timeout)
+        except TimeoutError:
+            self.running = False
+            future.cancel()
+            self.broadcast_to_clients({"type": "error", "message": "CAD sample timed out"})
+            raise
+
+    def _cancel_pending_checks(self):
+        with self._pending_lock:
+            pending = list(self._pending_checks)
+        for future in pending:
+            future.cancel()
 
     @staticmethod
     def _default_thresholds_for_sf(spreading_factor: int) -> tuple[int, int]:
@@ -51,9 +112,9 @@ class CADCalibrationEngine:
                 return False
         return default
 
-    def _get_radio_runtime_config(self, radio) -> dict[str, Any]:
+    def _get_radio_runtime_config(self, radio, radio_id=None) -> dict[str, Any]:
         config = getattr(self.daemon_instance, "config", {}) if self.daemon_instance else {}
-        radio_cfg = config.get("radio", {})
+        radio_cfg = radio_config(config, radio_id or self.radio_id)
 
         frequency = getattr(radio, "frequency", radio_cfg.get("frequency"))
         spreading_factor = getattr(radio, "spreading_factor", radio_cfg.get("spreading_factor", 8))
@@ -74,6 +135,17 @@ class CADCalibrationEngine:
             coding_rate = 5
 
         det_peak, det_min = self._default_thresholds_for_sf(spreading_factor)
+        cad_cfg = radio_cfg.get("cad", {}) or {}
+        det_peak = (
+            getattr(radio, "_custom_cad_peak", None)
+            if getattr(radio, "_custom_cad_peak", None) is not None
+            else cad_cfg.get("peak_threshold", det_peak)
+        )
+        det_min = (
+            getattr(radio, "_custom_cad_min", None)
+            if getattr(radio, "_custom_cad_min", None) is not None
+            else cad_cfg.get("min_threshold", det_min)
+        )
         if hasattr(radio, "_get_thresholds_for_current_settings"):
             try:
                 det_peak, det_min = radio._get_thresholds_for_current_settings()
@@ -367,6 +439,7 @@ class CADCalibrationEngine:
 
     def broadcast_to_clients(self, data):
 
+        data = dict(data, radio_id=self.radio_id)
         # Store the message for clients to pick up
         self.last_message = data
         # Also store in a queue for clients to consume
@@ -384,7 +457,7 @@ class CADCalibrationEngine:
                 )
                 return
 
-            radio = getattr(self.daemon_instance, "radio", None)
+            radio = self.session_radio or getattr(self.daemon_instance, "radio", None)
             if not radio:
                 self.broadcast_to_clients(
                     {"type": "error", "message": "Radio instance not available"}
@@ -467,20 +540,17 @@ class CADCalibrationEngine:
                             }
                         )
 
-                        future = asyncio.run_coroutine_threadsafe(
-                            self.test_cad_config(
-                                radio,
-                                det_peak,
-                                det_min,
-                                samples=evaluation_samples,
-                                cad_symbol_num=cad_symbol_num,
-                                cad_timeout_seconds=cad_timeout_seconds,
-                            ),
-                            self.event_loop,
+                        future = self._submit_cad_test(
+                            radio,
+                            det_peak,
+                            det_min,
+                            samples=evaluation_samples,
+                            cad_symbol_num=cad_symbol_num,
+                            cad_timeout_seconds=cad_timeout_seconds,
                         )
 
                         try:
-                            result = future.result(timeout=45)
+                            result = self._wait_cad_result(future, timeout=45)
                             self.results[f"{det_peak}-{det_min}"] = result
                             self.broadcast_to_clients(
                                 {
@@ -653,20 +723,17 @@ class CADCalibrationEngine:
                                 }
                             )
 
-                            future = asyncio.run_coroutine_threadsafe(
-                                self.test_cad_config(
-                                    radio,
-                                    det_peak,
-                                    det_min,
-                                    samples=samples,
-                                    cad_symbol_num=cad_symbol_num,
-                                    cad_timeout_seconds=cad_timeout_seconds,
-                                ),
-                                self.event_loop,
+                            future = self._submit_cad_test(
+                                radio,
+                                det_peak,
+                                det_min,
+                                samples=samples,
+                                cad_symbol_num=cad_symbol_num,
+                                cad_timeout_seconds=cad_timeout_seconds,
                             )
 
                             try:
-                                result = future.result(timeout=30)
+                                result = self._wait_cad_result(future, timeout=30)
                                 self.results[f"{det_peak}-{det_min}"] = result
                                 self.broadcast_to_clients(
                                     {
@@ -745,19 +812,16 @@ class CADCalibrationEngine:
                                         ),
                                     }
                                 )
-                                future = asyncio.run_coroutine_threadsafe(
-                                    self.test_cad_config(
-                                        radio,
-                                        det_peak,
-                                        det_min,
-                                        samples=extra_samples,
-                                        cad_symbol_num=cad_symbol_num,
-                                        cad_timeout_seconds=cad_timeout_seconds,
-                                    ),
-                                    self.event_loop,
+                                future = self._submit_cad_test(
+                                    radio,
+                                    det_peak,
+                                    det_min,
+                                    samples=extra_samples,
+                                    cad_symbol_num=cad_symbol_num,
+                                    cad_timeout_seconds=cad_timeout_seconds,
                                 )
                                 try:
-                                    verification_result = future.result(timeout=30)
+                                    verification_result = self._wait_cad_result(future, timeout=30)
                                     result_key = f"{det_peak}-{det_min}"
                                     base_result = self.results.get(result_key, candidate)
                                     merged_result = self._merge_cad_result_samples(
@@ -852,18 +916,22 @@ class CADCalibrationEngine:
                     }
                 )
             else:
-                self.broadcast_to_clients({"type": "status", "message": "Calibration stopped"})
+                self.broadcast_to_clients({"type": "stopped", "message": "Calibration stopped"})
 
         except Exception as e:
             logger.error(f"Calibration worker error: {e}")
             self.broadcast_to_clients({"type": "error", "message": str(e)})
         finally:
             self.running = False
+            self._cancel_pending_checks()
 
-    def start_calibration(self, samples: int = 8, delay_ms: int = 100):
+    def start_calibration(self, samples: int = 8, delay_ms: int = 100, *, radio_id=None):
 
-        if self.running:
+        if self.busy:
             return False
+        selected_id, selected_radio = resolve_cad_radio(self.daemon_instance, radio_id)
+        self.radio_id = selected_id
+        self.session_radio = selected_radio
         samples = self._normalize_int(samples, default=8, minimum=1, maximum=64)
         delay_ms = self._normalize_int(delay_ms, default=100, minimum=0, maximum=2000)
         known_signal_present = self._normalize_bool(
@@ -895,17 +963,21 @@ class CADCalibrationEngine:
             target=self.calibration_worker, args=(samples, delay_ms)
         )
         self.calibration_thread.daemon = True
-        self.calibration_thread.start()
+        try:
+            self.calibration_thread.start()
+        except Exception:
+            self.running = False
+            raise
 
         return True
 
     def stop_calibration(self):
 
         self.running = False
+        self._cancel_pending_checks()
         if self.calibration_thread:
             self.calibration_thread.join(timeout=2)
 
     def clear_message_queue(self):
 
-        if hasattr(self, "message_queue"):
-            self.message_queue.clear()
+        self.message_queue = []

@@ -12,6 +12,8 @@ import time
 from openhop_core.companion.radio_capabilities import resolve_max_tx_power_dbm
 from openhop_core.protocol.constants import PAYLOAD_TYPE_RAW_CUSTOM
 
+from repeater.bridge_homes import validate_bridge_homes, validate_companion_home
+from repeater.cad_radio import apply_cad_settings
 from repeater.companion.utils import (
     CompanionContactCapacityError,
     CompanionStateLoadError,
@@ -30,8 +32,6 @@ from repeater.config import (
     resolve_storage_dir,
     save_config,
 )
-from repeater.bridge_homes import validate_bridge_homes, validate_companion_home
-from repeater.radio_ids import canonical_radio_id, configured_radio_ids
 from repeater.config_manager import ConfigManager
 from repeater.data_acquisition.glass_handler import GlassHandler
 from repeater.data_acquisition.gps_service import GPSService
@@ -51,6 +51,7 @@ from repeater.identity_manager import IdentityConfigurationError, IdentityManage
 from repeater.logging_utils import normalize_log_level
 from repeater.neighbors_publisher import NeighborsPublisher
 from repeater.packet_router import PacketRouter
+from repeater.radio_ids import canonical_radio_id, configured_radio_ids
 from repeater.region_map_builder import build_region_map, resolve_default_scope_key
 from repeater.sensors import SensorManager
 from repeater.utils_packet import create_scoped_advert_packet
@@ -434,37 +435,13 @@ class RepeaterDaemon:
                     if hasattr(r, "set_event_loop"):
                         r.set_event_loop(loop)
 
-                # CAD from global radio.cad defaults applied to each physical radio.
-                cad_config = self.config.get("radio", {}).get("cad", {})
-                peak_threshold = cad_config.get("peak_threshold", 23)
-                min_threshold = cad_config.get("min_threshold", 11)
-                symbol_num = cad_config.get("symbol_num", 2)
-                try:
-                    symbol_num = int(symbol_num)
-                except (TypeError, ValueError):
-                    symbol_num = 2
-                if symbol_num not in {1, 2, 4, 8, 16}:
-                    logger.warning(
-                        "Invalid CAD symbol_num in config (%s); defaulting to 2",
-                        symbol_num,
-                    )
-                    symbol_num = 2
-
-                cad_applied = False
-                for r in physicals:
-                    if hasattr(r, "set_custom_cad_thresholds"):
-                        r.set_custom_cad_thresholds(peak=peak_threshold, min_val=min_threshold)
-                        if hasattr(r, "set_custom_cad_symbol_num"):
-                            r.set_custom_cad_symbol_num(symbol_num)
-                        cad_applied = True
-                if cad_applied:
+                applied_cad = apply_cad_settings(self)
+                for radio_id, peak, minimum, symbols in applied_cad:
                     logger.info(
-                        "CAD settings set from config: peak=%s, min=%s, symbols=%s",
-                        peak_threshold,
-                        min_threshold,
-                        symbol_num,
+                        "CAD settings set from config: radio=%s peak=%s min=%s symbols=%s",
+                        radio_id, peak, minimum, symbols,
                     )
-                else:
+                if not applied_cad:
                     logger.warning("Radio does not support CAD configuration")
 
                 if hasattr(self.radio, "get_frequency"):

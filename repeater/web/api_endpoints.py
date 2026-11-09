@@ -1,4 +1,3 @@
-from repeater.bridge_homes import BridgeHomeAssignmentError, validate_companion_home
 import asyncio
 import copy
 import json
@@ -9,6 +8,7 @@ import secrets
 import time
 from concurrent.futures import TimeoutError as FutureTimeoutError
 from datetime import datetime, timezone
+from functools import wraps
 from pathlib import Path
 from threading import RLock
 from typing import Callable, Optional
@@ -19,6 +19,8 @@ from openhop_core.protocol import CryptoUtils
 from openhop_core.protocol.constants import MAX_PACKET_PAYLOAD, MAX_PATH_SIZE
 
 from repeater import __version__
+from repeater.bridge_homes import BridgeHomeAssignmentError, validate_companion_home
+from repeater.cad_radio import physical_radios, radio_config, resolve_cad_radio
 from repeater.companion.identity_resolve import (
     derive_companion_public_key_hex,
     find_companion_index,
@@ -36,8 +38,6 @@ from repeater.config import (
     validate_fabric_config,
     validate_observer_identity_config,
 )
-from repeater.radio_ids import canonical_radio_id, configured_radio_ids
-from repeater.web.bridge_settings import bridge_candidate, bridge_view, redact_bridge
 from repeater.handler_helpers.acl import role_name as acl_role_name
 from repeater.modem_config import (
     LEGACY_MODEM_RADIO_TYPES,
@@ -45,8 +45,10 @@ from repeater.modem_config import (
     redact_modem_tokens_in_place,
 )
 from repeater.policy_engine import PolicyEngine
+from repeater.radio_ids import canonical_radio_id, configured_radio_ids
 from repeater.service_utils import get_buildroot_image_info
 from repeater.utils_packet import create_scoped_advert_packet
+from repeater.web.bridge_settings import bridge_candidate, bridge_view, redact_bridge
 
 from .auth.middleware import require_auth
 from .auth_endpoints import AuthAPIEndpoints
@@ -244,6 +246,28 @@ POLICY_GROUP_KINDS = {
 # type - Packet type 0-15
 # route - Route type 1-3
 # ============================================================================
+
+
+def _optional_cad_json(entity):
+    """Accept legacy bodyless Stop requests as well as named-radio JSON."""
+    body = entity.fp.read()
+    if not body:
+        cherrypy.serving.request.json = {}
+        return
+    with cherrypy.HTTPError.handle(ValueError, 400, "Invalid JSON document"):
+        parsed = json.loads(body.decode("utf-8"))
+        if not isinstance(parsed, dict):
+            raise ValueError("Expected a JSON object")  # noqa: TRY004 - HTTP JSON validation
+        cherrypy.serving.request.json = parsed
+
+
+def _serialize_cad_request(method):
+    @wraps(method)
+    def wrapped(self, *args, **kwargs):
+        with self.cad_calibration.control_lock:
+            return method(self, *args, **kwargs)
+
+    return wrapped
 
 
 class APIEndpoints:
@@ -4759,18 +4783,48 @@ class APIEndpoints:
 
     @cherrypy.expose
     @cherrypy.tools.json_out()
+    def cad_radios(self):
+        radios, default_id = physical_radios(self.daemon_instance)
+        result = []
+        for radio_id, radio in radios.items():
+            runtime = self.cad_calibration._get_radio_runtime_config(radio, radio_id)
+            cfg = radio_config(self.config, radio_id)
+            runtime.update(
+                radio_id=radio_id,
+                label=radio_id,
+                cad_symbol_num=getattr(radio, "_custom_cad_symbol_num", None)
+                or cfg.get("cad", {}).get("symbol_num", 2),
+                supports_cad=callable(getattr(radio, "perform_cad", None)),
+            )
+            result.append(runtime)
+        return self._success(
+            {
+                "radios": result,
+                "default_radio_id": default_id,
+                "active_radio_id": self.cad_calibration.radio_id
+                if self.cad_calibration.calibration_busy
+                else None,
+                "running": self.cad_calibration.calibration_busy,
+            }
+        )
+
+    @cherrypy.expose
+    @cherrypy.tools.json_out()
     @cherrypy.tools.json_in()
+    @_serialize_cad_request
     def cad_calibration_start(self):
 
         try:
             self._require_post()
             data = cherrypy.request.json or {}
+            if self.cad_calibration.busy:
+                return self._error("Calibration already running")
+            radio_id, radio = resolve_cad_radio(self.daemon_instance, data.get("radio_id"))
             samples = data.get("samples", 8)
             delay = data.get("delay", 100)
             known_signal_present = data.get("known_signal_present", False)
-            radio = getattr(self.daemon_instance, "radio", None) if self.daemon_instance else None
             default_cad_symbol_num = (
-                self.config.get("radio", {}).get("cad", {}).get("symbol_num", 2)
+                radio_config(self.config, radio_id).get("cad", {}).get("symbol_num", 2)
             )
             radio_symbol_num = getattr(radio, "_custom_cad_symbol_num", None) if radio else None
             if radio_symbol_num in {1, 2, 4, 8, 16}:
@@ -4789,8 +4843,8 @@ class APIEndpoints:
                 "cad_symbol_num": cad_symbol_num,
                 "cad_timeout_ms": cad_timeout_ms,
             }
-            if self.cad_calibration.start_calibration(samples, delay):
-                return self._success("Calibration started")
+            if self.cad_calibration.start_calibration(samples, delay, radio_id=radio_id):
+                return self._success({"message": "Calibration started", "radio_id": radio_id})
             else:
                 return self._error("Calibration already running")
         except cherrypy.HTTPError:
@@ -4802,10 +4856,17 @@ class APIEndpoints:
 
     @cherrypy.expose
     @cherrypy.tools.json_out()
+    @cherrypy.tools.json_in(force=False, processor=_optional_cad_json)
+    @_serialize_cad_request
     def cad_calibration_stop(self):
 
         try:
             self._require_post()
+            data = getattr(cherrypy.request, "json", None) or {}
+            if data.get("radio_id"):
+                radio_id, _ = resolve_cad_radio(self.daemon_instance, data["radio_id"])
+                if self.cad_calibration.busy and radio_id != self.cad_calibration.radio_id:
+                    return self._error("Calibration is running on a different radio")
             self.cad_calibration.stop_calibration()
             return self._success("Calibration stopped")
         except cherrypy.HTTPError:
@@ -4818,6 +4879,7 @@ class APIEndpoints:
     @cherrypy.expose
     @cherrypy.tools.json_out()
     @cherrypy.tools.json_in()
+    @_serialize_cad_request
     def cad_manual_check(self):
 
         try:
@@ -4826,14 +4888,16 @@ class APIEndpoints:
             self._require_post()
             data = cherrypy.request.json or {}
 
-            radio = getattr(self.daemon_instance, "radio", None) if self.daemon_instance else None
+            if self.cad_calibration.busy:
+                return self._error("Stop calibration before running a manual CAD check")
+            radio_id, radio = resolve_cad_radio(self.daemon_instance, data.get("radio_id"))
             if not radio or not hasattr(radio, "perform_cad"):
                 return self._error("Radio CAD support is not available")
             if self.event_loop is None:
                 return self._error("Event loop not available")
-            default_cad_symbol_num = getattr(
-                radio, "_custom_cad_symbol_num", None
-            ) or self.config.get("radio", {}).get("cad", {}).get("symbol_num", 2)
+            default_cad_symbol_num = getattr(radio, "_custom_cad_symbol_num", None) or radio_config(
+                self.config, radio_id
+            ).get("cad", {}).get("symbol_num", 2)
             try:
                 default_cad_symbol_num = int(default_cad_symbol_num)
             except (TypeError, ValueError):
@@ -4916,6 +4980,7 @@ class APIEndpoints:
 
                 attempts = detections + non_detections + timeouts + errors
                 return {
+                    "radio_id": radio_id,
                     "det_peak": det_peak,
                     "det_min": det_min,
                     "cad_symbol_num": cad_symbol_num,
@@ -4932,11 +4997,25 @@ class APIEndpoints:
                     "detected": detections > 0,
                 }
 
-            future = asyncio.run_coroutine_threadsafe(run_manual_checks(), self.event_loop)
+            async def guarded_manual_checks():
+                try:
+                    return await run_manual_checks()
+                finally:
+                    self.cad_calibration.manual_running = False
+
+            self.cad_calibration.manual_running = True
+            coroutine = guarded_manual_checks()
+            try:
+                future = asyncio.run_coroutine_threadsafe(coroutine, self.event_loop)
+            except Exception:
+                coroutine.close()
+                self.cad_calibration.manual_running = False
+                raise
             timeout_seconds = max(2.0, (cad_timeout_seconds * samples) + 2.0)
             payload = future.result(timeout=timeout_seconds)
             return self._success(payload)
         except FutureTimeoutError:
+            future.cancel()
             logger.error("Manual CAD check timed out")
             return self._error("Manual CAD check timed out")
         except cherrypy.HTTPError:
@@ -4948,11 +5027,15 @@ class APIEndpoints:
     @cherrypy.expose
     @cherrypy.tools.json_out()
     @cherrypy.tools.json_in()
+    @_serialize_cad_request
     def save_cad_settings(self):
 
         try:
             self._require_post()
             data = cherrypy.request.json or {}
+            if self.cad_calibration.busy:
+                return self._error("Stop calibration before saving CAD settings")
+            radio_id, radio = resolve_cad_radio(self.daemon_instance, data.get("radio_id"))
             peak = data.get("peak")
             min_val = data.get("min_val")
             cad_symbol_num = data.get("cad_symbol_num")
@@ -4968,7 +5051,9 @@ class APIEndpoints:
                 return self._error("peak and min_val must be integers")
 
             if cad_symbol_num is None:
-                cad_symbol_num = self.config.get("radio", {}).get("cad", {}).get("symbol_num", 2)
+                cad_symbol_num = (
+                    radio_config(self.config, radio_id).get("cad", {}).get("symbol_num", 2)
+                )
             try:
                 cad_symbol_num = int(cad_symbol_num)
             except (TypeError, ValueError):
@@ -4979,34 +5064,39 @@ class APIEndpoints:
             if cad_symbol_num not in {1, 2, 4, 8, 16}:
                 return self._error("cad_symbol_num must be one of: 1, 2, 4, 8, 16")
 
-            if (
-                self.daemon_instance
-                and hasattr(self.daemon_instance, "radio")
-                and self.daemon_instance.radio
-            ):
-                if hasattr(self.daemon_instance.radio, "set_custom_cad_thresholds"):
-                    self.daemon_instance.radio.set_custom_cad_thresholds(peak=peak, min_val=min_val)
-                if hasattr(self.daemon_instance.radio, "set_custom_cad_symbol_num"):
-                    self.daemon_instance.radio.set_custom_cad_symbol_num(cad_symbol_num)
-                logger.info(
-                    "Applied CAD settings to radio: peak=%s, min=%s, symbols=%s",
-                    peak,
-                    min_val,
-                    cad_symbol_num,
+            settings = {
+                "peak_threshold": peak,
+                "min_threshold": min_val,
+                "symbol_num": cad_symbol_num,
+            }
+            previous = copy.deepcopy(self.config)
+            entries = self.config.get("radios", []) or []
+            _, default_id = physical_radios(self.daemon_instance)
+            if entries:
+                target = next(
+                    (entry for entry in entries if canonical_radio_id(entry) == radio_id), None
                 )
-
-            if "radio" not in self.config:
-                self.config["radio"] = {}
-            if "cad" not in self.config["radio"]:
-                self.config["radio"]["cad"] = {}
-
-            self.config["radio"]["cad"]["peak_threshold"] = peak
-            self.config["radio"]["cad"]["min_threshold"] = min_val
-            self.config["radio"]["cad"]["symbol_num"] = cad_symbol_num
-
-            saved = self.config_manager.save_to_file()
-            if not saved:
+                if target is None:
+                    return self._error(f"No configuration entry for radio_id={radio_id!r}")
+                # Freeze inherited values before changing the legacy default block.
+                # Otherwise saving SMF would silently retune a radio that inherits it.
+                if radio_id == default_id:
+                    for entry in entries:
+                        effective = radio_config(self.config, canonical_radio_id(entry))
+                        entry.setdefault("radio", {}).setdefault(
+                            "cad", copy.deepcopy(effective.get("cad", {}))
+                        )
+                target.setdefault("radio", {})["cad"] = settings.copy()
+            if not entries or radio_id == default_id:
+                self.config.setdefault("radio", {})["cad"] = settings.copy()
+            if not self.config_manager.save_to_file():
+                self.config.clear()
+                self.config.update(previous)
                 return self._error("Failed to save configuration to file")
+            if hasattr(radio, "set_custom_cad_thresholds"):
+                radio.set_custom_cad_thresholds(peak=peak, min_val=min_val)
+            if hasattr(radio, "set_custom_cad_symbol_num"):
+                radio.set_custom_cad_symbol_num(cad_symbol_num)
 
             logger.info(
                 "Saved CAD settings to config: peak=%s, min=%s, symbols=%s, rate=%.1f%%",
@@ -5021,6 +5111,7 @@ class APIEndpoints:
                     f"CAD settings saved: peak={peak}, min={min_val}, symbols={cad_symbol_num}"
                 ),
                 "settings": {
+                    "radio_id": radio_id,
                     "peak": peak,
                     "min_val": min_val,
                     "cad_symbol_num": cad_symbol_num,
@@ -5473,78 +5564,30 @@ class APIEndpoints:
             return self._error(e)
 
     @cherrypy.expose
-    def cad_calibration_stream(self):
+    def cad_calibration_stream(self, radio_id=None):
+        try:
+            selected_id, _ = resolve_cad_radio(self.daemon_instance, radio_id)
+        except ValueError as exc:
+            raise cherrypy.HTTPError(400, str(exc)) from exc
         cherrypy.response.headers["Content-Type"] = "text/event-stream"
         cherrypy.response.headers["Cache-Control"] = "no-cache"
         cherrypy.response.headers["Connection"] = "keep-alive"
 
-        if not hasattr(self.cad_calibration, "message_queue"):
-            self.cad_calibration.message_queue = []
-
         def generate():
-            try:
-                yield f"data: {json.dumps({'type': 'connected', 'message': 'Connected to CAD calibration stream'})}\n\n"
-
-                if self.cad_calibration.running:
-                    radio = getattr(self.cad_calibration.daemon_instance, "radio", None)
-                    if radio:
-                        runtime = self.cad_calibration._get_radio_runtime_config(radio)
-                        sf = runtime.get("spreading_factor", 8)
-                        peak_range, min_range = self.cad_calibration.get_test_ranges(
-                            sf,
-                            runtime.get("current_cad_peak"),
-                            runtime.get("current_cad_min"),
-                        )
-                    else:
-                        sf = 8
-                        runtime = {
-                            "bandwidth": None,
-                            "frequency": None,
-                            "current_cad_peak": None,
-                            "current_cad_min": None,
-                        }
-                        peak_range, min_range = self.cad_calibration.get_test_ranges(sf, 22, 10)
-                    total_tests = len(peak_range) * len(min_range)
-                    session_cfg = getattr(self.cad_calibration, "session_config", {}) or {}
-
-                    status_message = {
-                        "type": "status",
-                        "message": f"Calibration in progress: SF{sf}, {total_tests} tests",
-                        "test_ranges": {
-                            "peak_min": min(peak_range),
-                            "peak_max": max(peak_range),
-                            "min_min": min(min_range),
-                            "min_max": max(min_range),
-                            "spreading_factor": sf,
-                            "bandwidth": runtime.get("bandwidth"),
-                            "frequency": runtime.get("frequency"),
-                            "current_peak": runtime.get("current_cad_peak"),
-                            "current_min": runtime.get("current_cad_min"),
-                            "cad_symbol_num": session_cfg.get("cad_symbol_num", 2),
-                            "known_signal_present": bool(
-                                session_cfg.get("known_signal_present", False)
-                            ),
-                            "total_tests": total_tests,
-                        },
-                    }
-                    yield f"data: {json.dumps(status_message)}\n\n"
-
-                last_message_index = len(self.cad_calibration.message_queue)
-
-                while True:
-                    current_queue_length = len(self.cad_calibration.message_queue)
-                    if current_queue_length > last_message_index:
-                        for i in range(last_message_index, current_queue_length):
-                            message = self.cad_calibration.message_queue[i]
-                            yield f"data: {json.dumps(message)}\n\n"
-                        last_message_index = current_queue_length
-                    else:
-                        yield f"data: {json.dumps({'type': 'keepalive'})}\n\n"
-
-                    time.sleep(0.5)
-
-            except Exception as e:
-                logger.error(f"SSE stream error: {e}")
+            yield f"data: {json.dumps({'type': 'connected', 'radio_id': selected_id})}\n\n"
+            queue = None
+            last_index = 0
+            while True:
+                current_queue = getattr(self.cad_calibration, "message_queue", [])
+                if current_queue is not queue:
+                    queue, last_index = current_queue, 0
+                messages = queue[last_index:]
+                last_index += len(messages)
+                for message in messages:
+                    if message.get("radio_id") == selected_id:
+                        yield f"data: {json.dumps(message)}\n\n"
+                yield f"data: {json.dumps({'type': 'keepalive', 'radio_id': selected_id})}\n\n"
+                time.sleep(0.5)
 
         return generate()
 

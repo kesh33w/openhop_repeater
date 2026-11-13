@@ -9,6 +9,7 @@ Start with the [Kesh OpenHop bridge project hub](https://github.com/kesh33w/kesh
 Native OpenHop routing runs first. For eligible group text, the bridge can repeat the original encrypted payload locally and create a separate copy for a mapped radio and channel. It authenticates and decrypts with the source channel key, then re-encrypts with the destination channel key.
 
 - Channel mappings are directional. Configure a reverse mapping for replies.
+- Optional per-mapping `text_prefix` adds a visible bridge marker, for example `↔ Dan: hello`. See [marker configuration and limits](docs/bridge-text-markers.md).
 - Local and crossing policies are independent. Dropping one copy does not cancel an allowed copy on the other path.
 - Translation accepts ordinary group text in flood packets. Signed group subtypes, direct messages, and control traffic do not use this translation path.
 - Separately enabled routes forward explicit-path direct messages and acknowledgements without decrypting them. Optional discovery and repeater-administration settings require explicit distinct peer routing and add flood path learning, encrypted requests/responses and reciprocal PATH transit. TRACE has its own SNR-progress handling. See [protocol coverage and limits](docs/bridge-protocol-routing.md).

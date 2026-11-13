@@ -7,14 +7,17 @@ its existing radio queue. This module never transmits or reports TX success.
 import asyncio
 import copy
 import hashlib
+import logging
 import sqlite3
 import threading
 import time
+import unicodedata
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from pathlib import Path
 
 from openhop_core.protocol.constants import (
+    MAX_TEXT_LEN,
     PAYLOAD_TYPE_GRP_TXT,
     PH_ROUTE_MASK,
     ROUTE_TYPE_FLOOD,
@@ -22,6 +25,25 @@ from openhop_core.protocol.constants import (
 from openhop_core.protocol.crypto import CryptoUtils
 
 from repeater.radio_ids import configured_radio_ids
+
+
+logger = logging.getLogger(__name__)
+MAX_BRIDGE_PREFIX_BYTES = 32
+
+
+def validate_text_prefix(value):
+    """A visible marker, never a replacement sender or a protocol control field."""
+    if not isinstance(value, str):
+        raise ValueError("Bridge text prefix must be a string")
+    if (
+        value != value.strip()
+        or ":" in value
+        or any(unicodedata.category(char)[0] == "C" or char in "\u2028\u2029" for char in value)
+    ):
+        raise ValueError("Bridge text prefix must be single-line text without colons, controls, or outer spaces")
+    if len(value.encode("utf-8")) > MAX_BRIDGE_PREFIX_BYTES:
+        raise ValueError("Bridge text prefix must be at most 32 UTF-8 bytes")
+    return value
 
 
 @dataclass(frozen=True)
@@ -60,6 +82,10 @@ class Crossing:
     source_channel: str
     target_channel: str
     enabled: bool = True
+    text_prefix: str = ""
+
+    def __post_init__(self):
+        validate_text_prefix(self.text_prefix)
 
 
 @dataclass(frozen=True)
@@ -136,9 +162,32 @@ class ChannelBridge:
             if not rule.enabled or rule.source != home or rule.source_channel != source.name:
                 continue
             target = self.channels[rule.target_channel]
+            translated = plain
+            if rule.text_prefix:
+                # Keep the original sender/body bytes and timestamp/flags intact.
+                # Strip only encryption padding and add the display marker before
+                # the sender. Do not use PacketBuilder, which truncates long text.
+                content = plain[5:].rstrip(b"\0")
+                marker = rule.text_prefix.encode("utf-8")
+                sender = content.split(b": ", 1)[0]
+                # Several independent bridges may see the same message. An exact
+                # marker already in the sender display must be idempotent, even
+                # behind another bridge's marker, so hashes stabilize and durable
+                # echo ledgers can stop a cycle. This is display text, not proof
+                # of origin; never strip labels or change the original sender.
+                if b" " + marker + b" " not in b" " + sender + b" ":
+                    content = marker + b" " + content
+                if len(content) > MAX_TEXT_LEN:
+                    # No plaintext, marker, channel name, or key enters the log.
+                    logger.warning(
+                        "Bridge marked crossing skipped: text is %d UTF-8 bytes (maximum %d); local repeat unchanged",
+                        len(content), MAX_TEXT_LEN,
+                    )
+                    continue
+                translated = plain[:5] + content
             outgoing = copy.deepcopy(packet)
             outgoing.payload = bytearray([target.selector]) + CryptoUtils.encrypt_then_mac(
-                target.secret[:16], target.secret, plain
+                target.secret[:16], target.secret, translated
             )
             outgoing.payload_len = len(outgoing.payload)
             sends.append(PlannedSend(rule.target, outgoing, True))
@@ -435,7 +484,7 @@ class BridgeSettings:
             if (
                 not isinstance(rule, dict)
                 or not required <= set(rule)
-                or set(rule) - (required | {"enabled"})
+                or set(rule) - (required | {"enabled", "text_prefix"})
                 or type(rule.get("enabled", True)) is not bool
             ):
                 raise ValueError("Invalid channel_bridge mapping fields")
@@ -450,6 +499,7 @@ class BridgeSettings:
                     rule.get("enabled", True)
                     and rule["source_channel"] not in self.disabled_channels
                     and rule["target_channel"] not in self.disabled_channels,
+                    text_prefix=rule.get("text_prefix", ""),
                 )
             )
         self.planner = ChannelBridge(parsed, crossings)

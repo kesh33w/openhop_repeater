@@ -6246,6 +6246,11 @@ components:
           type: string
         target_channel:
           type: string
+        text_prefix:
+          type: string
+          default: ''
+          maxLength: 32
+          description: Optional visible marker before the original sender, followed by one space. Blank disables marking. An identical space-delimited label already in the sender display is not repeated. At most 32 UTF-8 bytes; no colons, controls, or outer whitespace. Marked copies over the 160-byte sender-plus-message budget are skipped without truncation. Local repeats and other packet types are unchanged.
       required:
       - source_radio
       - target_radio

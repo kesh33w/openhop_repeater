@@ -46,6 +46,7 @@ class EvidenceSettings:
     window_seconds: int = 120
     capacity: int = 256
     observers: tuple = ()
+    subscribers: tuple = ()
 
     @classmethod
     def from_config(cls, config):
@@ -55,6 +56,7 @@ class EvidenceSettings:
             "window_seconds",
             "capacity",
             "observers",
+            "subscribers",
         }:
             raise ValueError("Invalid bridge reception evidence settings")
         enabled = cfg.get("enabled", False)
@@ -103,7 +105,10 @@ class EvidenceSettings:
                 raise ValueError("Duplicate reception observer")
             seen.add(identity)
             observers.append(Observer(broker, region, public_key, radio_id))
-        return cls(enabled, window, capacity, tuple(observers))
+        from repeater.data_acquisition.bridge_subscriber import SubscriberSettings
+
+        subscribers = SubscriberSettings.parse(cfg.get("subscribers", []), observers)
+        return cls(enabled, window, capacity, tuple(observers), subscribers)
 
 
 def _timestamp(value):
@@ -187,24 +192,31 @@ class ReceptionEvidence:
             for observer in self.settings.observers
         }
         self._observers = {(o.broker, o.topic): o for o in self.settings.observers}
+        self._statuses = {}
 
     def exclude_identities(self, identities):
         with self._lock:
             self._excluded.update(str(key).lower() for key in identities)
 
-    def topics(self, broker):
+    def topics(self, broker, *, include_status=False):
         if not self.settings.enabled:
             return []
         with self._lock:
             return [
-                o.topic
+                topic
                 for o in self.settings.observers
                 if o.broker == broker and o.public_key.lower() not in self._excluded
+                for topic in (
+                    [o.topic, o.topic.removesuffix("packets") + "status"]
+                    if include_status
+                    else [o.topic]
+                )
             ]
 
     def feed_state(self, broker, state):
         allowed = {
             "not_connected",
+            "connection_failed",
             "subscribing",
             "connected",
             "subscription_failed",
@@ -371,6 +383,50 @@ class ReceptionEvidence:
                     self._mark_observed(item)
             return True
 
+    def ingest_status(self, broker, topic, payload, *, retained=False):
+        """Retain bounded receiver metadata only. Status never proves reception."""
+        if not self.settings.enabled:
+            return False
+        with self._lock:
+            observer = self._observers.get((broker, topic.removesuffix("status") + "packets"))
+            try:
+                if (
+                    not topic.endswith("/status")
+                    or observer is None
+                    or observer.public_key.lower() in self._excluded
+                    or not isinstance(payload, (bytes, bytearray))
+                    or len(payload) > 16384
+                ):
+                    return False
+                data = json.loads(payload)
+                if (
+                    not isinstance(data, dict)
+                    or not isinstance(data.get("origin_id"), str)
+                    or data["origin_id"].lower() != observer.public_key.lower()
+                ):
+                    return False
+                reported = _timestamp(data.get("timestamp"))
+                now = self.clock()
+                if reported > now + 2:
+                    return False
+                row = {
+                    "broker": broker,
+                    "public_key": observer.public_key,
+                    "radio_id": observer.radio_id,
+                    "reported_at": _iso(reported),
+                    "received_at": _iso(now),
+                    "retained": bool(retained),
+                }
+                if data.get("status") in ("online", "offline"):
+                    row["status"] = data["status"]
+                radio = data.get("radio")
+                if isinstance(radio, str) and re.fullmatch(r"[0-9., +\-]{1,128}", radio):
+                    row["radio"] = radio
+                self._statuses[(broker, observer.public_key)] = row
+                return True
+            except (ValueError, TypeError, KeyError, OverflowError, RecursionError):
+                return False
+
     def status(self):
         with self._lock:
             self._expire()
@@ -379,6 +435,7 @@ class ReceptionEvidence:
                 "window_seconds": self.settings.window_seconds,
                 "meaning": "Independent destination RF reports, not endpoint delivery receipts",
                 "counts": dict(self._counts),
+                "receiver_status": copy.deepcopy(list(self._statuses.values())),
                 "feeds": copy.deepcopy(list(self._feeds.values())),
                 "recent": [
                     copy.deepcopy(item["view"]) for item in list(self._pending.values())[-50:]

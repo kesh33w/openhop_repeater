@@ -812,6 +812,7 @@ class MeshCoreToMqttPusher:
             conn.identity_error = identity_error
             self.connections.append(conn)
 
+        self.reception_subscribers = []
         if reception_evidence is not None and reception_evidence.settings.enabled:
             from .bridge_observer_feed import BridgeObserverFeed
 
@@ -820,8 +821,15 @@ class MeshCoreToMqttPusher:
             reception_evidence.exclude_identities(
                 [self.public_key] + [connection.public_key for connection in self.connections]
             )
+            from .bridge_subscriber import BridgeSubscriber
+
+            self.reception_subscribers = [
+                BridgeSubscriber(settings, reception_evidence)
+                for settings in reception_evidence.settings.subscribers
+            ]
+            dedicated = {s.broker for s in reception_evidence.settings.subscribers}
             for connection in self.connections:
-                if connection.broker["name"] in {
+                if connection.broker["name"] not in dedicated and connection.broker["name"] in {
                     observer.broker for observer in reception_evidence.settings.observers
                 }:
                     connection.reception_feed = BridgeObserverFeed(connection, reception_evidence)
@@ -952,6 +960,12 @@ class MeshCoreToMqttPusher:
         self._shutdown_requested = False
         self._connect_timers = []
 
+        for subscriber in getattr(self, "reception_subscribers", ()):
+            try:
+                subscriber.connect()
+            except Exception:  # noqa: BLE001 - isolate optional reception transport
+                logger.warning("Independent reception subscriber startup failed")
+
         for idx, conn in enumerate(self.connections):
             try:
                 if idx == 0:
@@ -981,6 +995,12 @@ class MeshCoreToMqttPusher:
     def disconnect(self):
         """Disconnect from all brokers"""
         self._shutdown_requested = True
+
+        for subscriber in getattr(self, "reception_subscribers", ()):
+            try:
+                subscriber.disconnect()
+            except Exception:  # noqa: BLE001 - isolate optional reception transport
+                logger.warning("Independent reception subscriber shutdown failed")
 
         # Cancel any delayed connect timers first.
         for timer in self._connect_timers:

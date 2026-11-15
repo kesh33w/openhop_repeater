@@ -2736,11 +2736,13 @@ class APIEndpoints:
         try:
             future = asyncio.run_coroutine_threadsafe(update(self, cherrypy.request.json), self.event_loop)
             # A running disk write must reach a known outcome before replying.
-            if not future.result():
+            result = future.result()
+            if not result:
                 return self._error("Internet Link options could not be saved. No settings were changed.")
-            return self._success({"saved": True, "live_updated": True, "restart_required": False})
+            return self._success(result if isinstance(result, dict) else
+                                 {"saved": True, "live_updated": True, "restart_required": False})
         except (ValueError, TypeError, KeyError):
-            return self._error("Invalid Internet Link options. Check timeout and traffic limits.")
+            return self._error("Invalid Internet Link options. Check the service setting and traffic limits.")
         except Exception:
             return self._error("Internet Link options could not be saved.")
 

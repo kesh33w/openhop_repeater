@@ -44,6 +44,7 @@ from repeater.bridge_protocols import (
     is_protocol_flood,
     is_protocol_flood_candidate,
     is_trace_transit,
+    packet_type_enabled,
     trace_record_fields,
 )
 from repeater.bridge_traffic import DirectionalTrafficGuard
@@ -205,6 +206,8 @@ class RepeaterHandler(BaseHandler):
         self._last_rf_receive = dict.fromkeys(radio_ids or configured_radio_ids(config) or ('radio0',))
         self._rf_receive_subscribed = False
         self.policy_engine = PolicyEngine.from_runtime_config(config)
+        from repeater.network_topology import topology_from_config
+        self.network_topology = topology_from_config(config)
         self.channel_bridge = BridgeSettings.from_config(config)
         if self.channel_bridge:
             self.channel_bridge.bind_routing_identity(self.local_hash_bytes)
@@ -225,6 +228,7 @@ class RepeaterHandler(BaseHandler):
         )
         self._bridge_pending = 0
         self.seen_packets = OrderedDict()
+        self._forward_destinations = OrderedDict()
         self.cache_ttl = max(
             300, config.get("repeater", {}).get("cache_ttl", 3600)
         )  # Min 5 min, default 1 hour
@@ -435,9 +439,24 @@ class RepeaterHandler(BaseHandler):
             or getattr(packet, "_rx_radio_id", None)
             or getattr(packet, "rx_radio_id", None)
         )
+        topology = getattr(self, "network_topology", None)
+        if topology and rx_radio_id is not None:
+            if rx_radio_id not in topology.members or topology.is_shadow(rx_radio_id):
+                return
+            packet._rx_radio_id = rx_radio_id
+            processed_packet._rx_radio_id = rx_radio_id
+        reply_to_radio_id = metadata.get("reply_to_radio_id")
+        reply_home = None
+        if topology and reply_to_radio_id is not None:
+            if not local_transmission or rx_radio_id is not None:
+                raise ValueError("Reply context requires a newly generated local packet")
+            reply_home = topology.reply_destination(reply_to_radio_id)
+            packet._reply_to_radio_id = reply_to_radio_id
         tx_radio_ids_sent = None
         tx_egress = None
-        if local_transmission and not rx_radio_id:
+        if reply_home is not None:
+            tx_radio_ids = (reply_home,)
+        elif local_transmission and not rx_radio_id:
             # Originated here: companion, repeater/room identity, protocol reply.
             tx_radio_ids = self._resolve_origin_tx_radio_ids()
         else:
@@ -470,13 +489,16 @@ class RepeaterHandler(BaseHandler):
                     rssi=rssi,
                     snr=snr,
                     score=score,
-                    is_duplicate=(pkt_hash_full in self.seen_packets),
+                    is_duplicate=self.is_duplicate(packet, packet_hash=pkt_hash_full),
                     rx_radio_id=rx_radio_id,
                 )
 
         if self.bridge_echoes and not local_transmission:
             try:
-                bridge_echo = await self.bridge_echoes.contains(packet)
+                if topology and rx_radio_id:
+                    bridge_echo = await self.bridge_echoes.contains(packet, network=topology.network(rx_radio_id), received_only=topology.has_receivers)
+                else:
+                    bridge_echo = await self.bridge_echoes.contains(packet)
             except Exception as exc:
                 # An unclassified packet may be an echo. Suppress forwarding,
                 # but continue recording the real RX and its operational drop.
@@ -492,6 +514,7 @@ class RepeaterHandler(BaseHandler):
                     policy_reason = "Channel bridge echo"
 
         protocols = self.channel_bridge.protocols if self.channel_bridge else {}
+        packet_types = getattr(self.channel_bridge, "packet_types", {})
         distinct_routing = bool(
             self.channel_bridge and self.channel_bridge.peer_routing == "distinct"
         )
@@ -499,25 +522,25 @@ class RepeaterHandler(BaseHandler):
             self.channel_bridge.crossing_identity if distinct_routing else self.local_hash_bytes
         )
         trace_transit = bool(
-            not local_transmission and not peer_ingress and protocols.get("trace")
+            not local_transmission and not peer_ingress
+            and packet_type_enabled(PAYLOAD_TYPE_TRACE, "direct", protocols, packet_types)
             and is_trace_transit(packet, crossing_prefix)
         )
         direct_transit = bool(
             self.channel_bridge and (
-                self.channel_bridge.is_direct_transit(
-                    packet, crossing_prefix, local_transmission=(
-                        local_transmission or distinct_routing and peer_ingress
-                    )
-                )
-                or (not local_transmission and not peer_ingress and is_protocol_direct(
-                    packet, crossing_prefix, protocols
+                (not local_transmission and not peer_ingress and is_protocol_direct(
+                    packet, crossing_prefix, protocols, packet_types
                 ))
+                or (not distinct_routing and peer_ingress
+                    and self.channel_bridge.is_direct_transit(
+                        packet, crossing_prefix, local_transmission=local_transmission
+                    ))
                 or trace_transit
             )
         )
         protocol_flood = bool(
             not local_transmission and not peer_ingress and self.channel_bridge
-            and is_protocol_flood(packet, self.local_hash_bytes, protocols, crossing_prefix)
+            and is_protocol_flood(packet, self.local_hash_bytes, protocols, crossing_prefix, packet_types)
         )
 
         if (distinct_routing and direct_transit and not peer_ingress and not local_transmission
@@ -562,7 +585,9 @@ class RepeaterHandler(BaseHandler):
                 logger.debug(f"Local transmission: calculated delay {delay:.3f}s")
 
         send_plan = None
-        bridge_home = rx_radio_id or metadata.get("home_radio_id")
+        bridge_home = reply_home or rx_radio_id or metadata.get("home_radio_id")
+        if topology and rx_radio_id:
+            bridge_home = topology.home(rx_radio_id)
         if self.channel_bridge:
             if not bridge_home and local_transmission:
                 bridge_home = self.channel_bridge.origin_home
@@ -582,6 +607,11 @@ class RepeaterHandler(BaseHandler):
                         protocol_flood=protocol_flood
                     )
                 )
+                if reply_home is not None:
+                    send_plan = tuple(send for send in send_plan if send.destination.name == reply_home)
+                if topology and rx_radio_id:
+                    allowed = topology.destinations(rx_radio_id)
+                    send_plan = tuple(send for send in send_plan if send.destination.name in allowed)
                 if not send_plan:
                     result = None
                     processed_packet.drop_reason = (
@@ -592,179 +622,247 @@ class RepeaterHandler(BaseHandler):
                 else:
                     tx_radio_ids = tuple(send.destination.name for send in send_plan)
 
+        destination_claims = {}
+        destination_outcomes = []
+        if result and topology and topology.has_receivers and not local_transmission:
+            now = time.monotonic()
+            ttl = self.channel_bridge.ttl if self.channel_bridge else 300
+            for key, completed_at in list(self._forward_destinations.items()):
+                if completed_at is not None and now - completed_at > ttl:
+                    del self._forward_destinations[key]
+            candidates = ((send.destination.name, send.packet) for send in send_plan) if send_plan is not None else (
+                (rid, result[0]) for rid in (tx_radio_ids or ()))
+            allowed_ids = []
+            for rid, outgoing in candidates:
+                key = (topology.network(rid), outgoing.calculate_packet_hash().hex())
+                if key in self._forward_destinations or len(self._forward_destinations) >= 10000:
+                    continue
+                self._forward_destinations[key] = None  # Pending claims never expire.
+                destination_claims[rid] = key
+                allowed_ids.append(rid)
+            if send_plan is not None:
+                send_plan = tuple(send for send in send_plan if send.destination.name in allowed_ids)
+            tx_radio_ids = tuple(allowed_ids)
+            if not allowed_ids:
+                result = None
+                processed_packet.drop_reason = "No unclaimed forwarding destination"
+
         if result:
-            fwd_pkt, delay = result
-            if peer_ingress:
-                fwd_pkt._private_peer = True
-                fwd_pkt._private_peer_deadline = packet._private_peer_deadline
-                fwd_pkt._path_hash_mode_applied = True
-                fwd_pkt._flood_scope_applied = True
-            tx_delay_ms = delay * 1000.0
-
-            # Capture the forwarded path (after modification)
-            forwarded_path_hashes = fwd_pkt.get_path_hashes_hex()
-
-            # MeshCore queues multi-ack redundancy copies ahead of the primary
-            # ACK at the same scheduled time, so create their TX tasks first.
-            # Each task re-checks the duty-cycle gate before transmitting, and
-            # every packet from one forwarding decision shares its egress set.
-            # A fan-out decides send-time normalisation (flood scope, hash mode)
-            # up front; do it before metering so every duty-cycle gate sees the
-            # bytes that actually go on air.
-            if tx_radio_ids is None:
-                # Nothing above named an egress, so the fabric picks one inside
-                # send(). Ask it now, with this packet's own ingress radio, and
-                # keep the answer: on a core that passes the ingress radio to
-                # the selector the answer is a function of the packet, so it is
-                # the same answer send() would reach and nothing moves on the
-                # air. What it buys is that the duty cycle is charged to the
-                # channel that carries the packet instead of to whichever radio
-                # the node lists first. An older core cannot answer, and
-                # tx_radio_ids stays None: the fabric goes on choosing at send
-                # time and the gate holds every radio it could pick to its own
-                # budget.
-                planned = self._planned_egress_radio_id(fwd_pkt, rx_radio_id)
-                if planned is not None:
-                    tx_radio_ids = (planned,)
-
-            fanout = bool(tx_radio_ids) and len(tx_radio_ids) > 1
+            destination_group_completed = False
             extra_tx_tasks = []
-            for extra_pkt, extra_delay in getattr(result, "extras", ()):
+            tx_task = None
+            try:
+                fwd_pkt, delay = result
                 if peer_ingress:
-                    extra_pkt._private_peer = True
-                    extra_pkt._private_peer_deadline = packet._private_peer_deadline
-                    extra_pkt._path_hash_mode_applied = True
-                    extra_pkt._flood_scope_applied = True
-                if fanout:
-                    self._freeze_tx_normalisation(extra_pkt)
-                extra_airtime_ms = self.airtime_mgr.calculate_airtime(extra_pkt.get_raw_length())
-                extra_tx_tasks.append(
-                    (
-                        extra_pkt,
-                        await self._schedule_egress_tx(
-                            extra_pkt,
-                            extra_delay,
-                            extra_airtime_ms,
-                            tx_radio_ids,
-                            send_plan=(
-                                self.channel_bridge.plan(
-                                    extra_pkt, bridge_home, policy_context,
-                                    direct_transit=direct_transit,
-                                )
-                                if self.channel_bridge
-                                else None
-                            ),
-                            bridge_home=bridge_home,
-                        ),
-                    )
-                )
+                    fwd_pkt._private_peer = True
+                    fwd_pkt._private_peer_deadline = packet._private_peer_deadline
+                    fwd_pkt._path_hash_mode_applied = True
+                    fwd_pkt._flood_scope_applied = True
+                tx_delay_ms = delay * 1000.0
 
-            # Check duty-cycle before scheduling TX
-            if fanout:
-                self._freeze_tx_normalisation(fwd_pkt)
-            airtime_ms = self.airtime_mgr.calculate_airtime(fwd_pkt.get_raw_length())
+                # Capture the forwarded path (after modification)
+                forwarded_path_hashes = fwd_pkt.get_path_hashes_hex()
 
-            # Advisory, and asked of the radios this packet is headed for: one
-            # radio being over budget is no reason to drop a forward the other
-            # can carry. The authoritative gate is per egress, under the TX lock.
-            can_tx, wait_time = self._egress_can_transmit(fwd_pkt, tx_radio_ids)
+                # MeshCore queues multi-ack redundancy copies ahead of the primary
+                # ACK at the same scheduled time, so create their TX tasks first.
+                # Each task re-checks the duty-cycle gate before transmitting, and
+                # every packet from one forwarding decision shares its egress set.
+                # A fan-out decides send-time normalisation (flood scope, hash mode)
+                # up front; do it before metering so every duty-cycle gate sees the
+                # bytes that actually go on air.
+                if tx_radio_ids is None:
+                    # Nothing above named an egress, so the fabric picks one inside
+                    # send(). Ask it now, with this packet's own ingress radio, and
+                    # keep the answer: on a core that passes the ingress radio to
+                    # the selector the answer is a function of the packet, so it is
+                    # the same answer send() would reach and nothing moves on the
+                    # air. What it buys is that the duty cycle is charged to the
+                    # channel that carries the packet instead of to whichever radio
+                    # the node lists first. An older core cannot answer, and
+                    # tx_radio_ids stays None: the fabric goes on choosing at send
+                    # time and the gate holds every radio it could pick to its own
+                    # budget.
+                    planned = self._planned_egress_radio_id(fwd_pkt, rx_radio_id)
+                    if planned is not None:
+                        tx_radio_ids = (planned,)
 
-            # LBT metadata (set after any TX path that awaits send)
-            tx_metadata = None
-            lbt_attempts = 0
-            lbt_backoff_delays_ms = None
-            lbt_channel_busy = False
-
-            if not can_tx and not local_transmission:
-                logger.warning(
-                    f"Duty-cycle limit exceeded. Airtime={airtime_ms:.1f}ms, "
-                    f"wait={wait_time:.1f}s before retry"
-                )
-                self.dropped_count += 1
-                drop_reason = DropReason.DUTY_CYCLE_LIMIT
-            else:
-                if can_tx:
-                    failure_reason = "TX failed"
-                    failure_label = "Local TX failed"
-                else:
-                    # Defer local TX until duty cycle allows instead of dropping
-                    logger.info(
-                        f"Duty-cycle limit: deferring local TX by {wait_time:.1f}s "
-                        f"(airtime={airtime_ms:.1f}ms)"
-                    )
-                    delay += wait_time
-                    failure_reason = "TX failed (deferred)"
-                    failure_label = "Deferred local TX failed"
-                tx_task = await self._schedule_egress_tx(
-                    fwd_pkt,
-                    delay,
-                    airtime_ms,
-                    tx_radio_ids,
-                    local_transmission=local_transmission,
-                    send_plan=send_plan,
-                    bridge_home=bridge_home,
-                    bridge_source=packet if trace_transit else None,
-                )
-                try:
-                    tx_result = await self._await_egress_tx(tx_task, fwd_pkt)
-                except Exception as e:
-                    transmitted = False
-                    drop_reason = failure_reason
-                    logger.warning(f"{failure_label}: {e}")
-                    raise
-                # One logical forward, however many radios carried it: the
-                # per-radio sent_flood/sent_direct counters track physical sends.
-                if tx_result.any_success:
-                    self.forwarded_count += 1
-                    transmitted = True
-                else:
-                    transmitted = False
-                    drop_reason = failure_reason
-                    self.dropped_count += 1
-
-                if len(tx_result.results) > 1 and not tx_result.all_success:
-                    logger.warning(
-                        "Fan-out %s TX failure: %s successful=%s failed=%s",
-                        "partial" if tx_result.any_success else "total",
-                        f"rx_radio={rx_radio_id}" if rx_radio_id else "origin=local",
-                        tx_result.successful_radio_ids,
-                        tx_result.failed_radio_ids,
-                    )
-                tx_radio_ids_sent = tx_result.successful_radio_ids or None
-                tx_egress = self._egress_records(tx_result)
-
-                # Scalar TX fields describe the primary egress.
-                primary = tx_result.primary
-                if primary is not None and primary.success:
-                    tx_radio_id = primary.radio_id
-                tx_metadata = primary.metadata if primary is not None else None
-                if tx_metadata:
-                    lbt_attempts = tx_metadata.get("lbt_attempts", 0)
-                    lbt_backoff_delays_ms = tx_metadata.get("lbt_backoff_delays_ms", [])
-                    lbt_channel_busy = tx_metadata.get("lbt_channel_busy", False)
-
-                    if lbt_attempts > 0:
-                        total_lbt_delay = sum(lbt_backoff_delays_ms)
-                        logger.info(
-                            f"LBT: {lbt_attempts} attempts, {total_lbt_delay:.0f}ms delay, "
-                            f"backoffs={lbt_backoff_delays_ms}"
+                fanout = bool(tx_radio_ids) and len(tx_radio_ids) > 1
+                for extra_pkt, extra_delay in getattr(result, "extras", ()):
+                    if peer_ingress:
+                        extra_pkt._private_peer = True
+                        extra_pkt._private_peer_deadline = packet._private_peer_deadline
+                        extra_pkt._path_hash_mode_applied = True
+                        extra_pkt._flood_scope_applied = True
+                    if fanout:
+                        self._freeze_tx_normalisation(extra_pkt)
+                    extra_plan = None
+                    if self.channel_bridge:
+                        extra_plan = self.channel_bridge.plan(
+                            extra_pkt, bridge_home, policy_context, direct_transit=direct_transit
                         )
+                        if topology and rx_radio_id:
+                            allowed = topology.destinations(rx_radio_id)
+                            extra_plan = tuple(
+                                send for send in extra_plan if send.destination.name in allowed
+                                and (not destination_claims or send.destination.name in destination_claims)
+                            )
+                        if not extra_plan:
+                            continue
+                    extra_airtime_ms = self.airtime_mgr.calculate_airtime(extra_pkt.get_raw_length())
+                    extra_tx_tasks.append(
+                        (
+                            extra_pkt,
+                            await self._schedule_egress_tx(
+                                extra_pkt,
+                                extra_delay,
+                                extra_airtime_ms,
+                                tx_radio_ids,
+                                send_plan=extra_plan,
+                                bridge_home=bridge_home,
+                            ),
+                        )
+                    )
 
-            # Redundancy copies ride alongside the primary result: collect them
-            # without letting a failed extra change the primary outcome. Their
-            # sends are physical transmissions like any other, so they belong in
-            # the egress rows -- leaving them out would undercount exactly the
-            # traffic a multi-ack burst adds to a busy channel.
-            for extra_pkt, extra_task in extra_tx_tasks:
-                try:
-                    extra_result = await self._await_egress_tx(extra_task, extra_pkt)
-                    if extra_result.any_success:
+                # Check duty-cycle before scheduling TX
+                if fanout:
+                    self._freeze_tx_normalisation(fwd_pkt)
+                airtime_ms = self.airtime_mgr.calculate_airtime(fwd_pkt.get_raw_length())
+
+                # Advisory, and asked of the radios this packet is headed for: one
+                # radio being over budget is no reason to drop a forward the other
+                # can carry. The authoritative gate is per egress, under the TX lock.
+                can_tx, wait_time = self._egress_can_transmit(fwd_pkt, tx_radio_ids)
+
+                # LBT metadata (set after any TX path that awaits send)
+                tx_metadata = None
+                lbt_attempts = 0
+                lbt_backoff_delays_ms = None
+                lbt_channel_busy = False
+
+                if not can_tx and not local_transmission:
+                    logger.warning(
+                        f"Duty-cycle limit exceeded. Airtime={airtime_ms:.1f}ms, "
+                        f"wait={wait_time:.1f}s before retry"
+                    )
+                    self.dropped_count += 1
+                    drop_reason = DropReason.DUTY_CYCLE_LIMIT
+                else:
+                    if can_tx:
+                        failure_reason = "TX failed"
+                        failure_label = "Local TX failed"
+                    else:
+                        # Defer local TX until duty cycle allows instead of dropping
+                        logger.info(
+                            f"Duty-cycle limit: deferring local TX by {wait_time:.1f}s "
+                            f"(airtime={airtime_ms:.1f}ms)"
+                        )
+                        delay += wait_time
+                        failure_reason = "TX failed (deferred)"
+                        failure_label = "Deferred local TX failed"
+                    tx_task = await self._schedule_egress_tx(
+                        fwd_pkt,
+                        delay,
+                        airtime_ms,
+                        tx_radio_ids,
+                        local_transmission=local_transmission,
+                        send_plan=send_plan,
+                        bridge_home=bridge_home,
+                        bridge_source=packet if trace_transit else None,
+                    )
+                    try:
+                        tx_result = await self._await_egress_tx(tx_task, fwd_pkt)
+                    except Exception as e:
+                        transmitted = False
+                        drop_reason = failure_reason
+                        logger.warning(f"{failure_label}: {e}")
+                        raise
+                    destination_outcomes.extend(tx_result.results)
+                    # One logical forward, however many radios carried it: the
+                    # per-radio sent_flood/sent_direct counters track physical sends.
+                    if tx_result.any_success:
                         self.forwarded_count += 1
-                    extra_egress = self._egress_records(extra_result)
-                    if extra_egress:
-                        tx_egress = (tx_egress or []) + extra_egress
-                except Exception as e:
-                    logger.warning(f"Multi-ack redundancy TX failed: {e}")
+                        transmitted = True
+                    else:
+                        transmitted = False
+                        drop_reason = failure_reason
+                        self.dropped_count += 1
+
+                    if len(tx_result.results) > 1 and not tx_result.all_success:
+                        logger.warning(
+                            "Fan-out %s TX failure: %s successful=%s failed=%s",
+                            "partial" if tx_result.any_success else "total",
+                            f"rx_radio={rx_radio_id}" if rx_radio_id else "origin=local",
+                            tx_result.successful_radio_ids,
+                            tx_result.failed_radio_ids,
+                        )
+                    tx_radio_ids_sent = tx_result.successful_radio_ids or None
+                    tx_egress = self._egress_records(tx_result)
+
+                    # Scalar TX fields describe the primary egress.
+                    primary = tx_result.primary
+                    if primary is not None and primary.success:
+                        tx_radio_id = primary.radio_id
+                    tx_metadata = primary.metadata if primary is not None else None
+                    if tx_metadata:
+                        lbt_attempts = tx_metadata.get("lbt_attempts", 0)
+                        lbt_backoff_delays_ms = tx_metadata.get("lbt_backoff_delays_ms", [])
+                        lbt_channel_busy = tx_metadata.get("lbt_channel_busy", False)
+
+                        if lbt_attempts > 0:
+                            total_lbt_delay = sum(lbt_backoff_delays_ms)
+                            logger.info(
+                                f"LBT: {lbt_attempts} attempts, {total_lbt_delay:.0f}ms delay, "
+                                f"backoffs={lbt_backoff_delays_ms}"
+                            )
+
+                # Redundancy copies ride alongside the primary result: collect them
+                # without letting a failed extra change the primary outcome. Their
+                # sends are physical transmissions like any other, so they belong in
+                # the egress rows -- leaving them out would undercount exactly the
+                # traffic a multi-ack burst adds to a busy channel.
+                for extra_pkt, extra_task in extra_tx_tasks:
+                    try:
+                        extra_result = await self._await_egress_tx(extra_task, extra_pkt)
+                        destination_outcomes.extend(extra_result.results)
+                        if extra_result.any_success:
+                            self.forwarded_count += 1
+                        extra_egress = self._egress_records(extra_result)
+                        if extra_egress:
+                            tx_egress = (tx_egress or []) + extra_egress
+                    except Exception as e:
+                        destination_outcomes.extend(RadioTxResult(rid, False, error=e) for rid in destination_claims)
+                        logger.warning(f"Multi-ack redundancy TX failed: {e}")
+                destination_group_completed = True
+            finally:
+                # Keep interrupted groups pending while independently scheduled ACK
+                # redundancy can still transmit. Completion callbacks start retention
+                # only once every known task has settled; no lock or waiter is held.
+                group_tasks = [task for _, task in extra_tx_tasks]
+                if tx_task is not None:
+                    group_tasks.append(tx_task)
+
+                def finish_destination_claims(_done=None):
+                    if any(not task.done() for task in group_tasks):
+                        return
+                    for rid, key in destination_claims.items():
+                        outcomes = [outcome for outcome in destination_outcomes if outcome.radio_id == rid]
+                        if destination_group_completed and not any(
+                            outcome.success or outcome.error or (outcome.metadata or {}).get("tx_outcome_uncertain")
+                            for outcome in outcomes
+                        ):
+                            self._forward_destinations.pop(key, None)
+                        else:
+                            self._forward_destinations[key] = time.monotonic()
+                    if not destination_group_completed:
+                        for task in group_tasks:
+                            if not task.cancelled():
+                                task.exception()  # Observe abandoned task failures.
+
+                if destination_claims:
+                    for task in group_tasks:
+                        if not task.done():
+                            task.add_done_callback(finish_destination_claims)
+                    finish_destination_claims()
         else:
             self.dropped_count += 1
             # Determine drop reason
@@ -795,7 +893,7 @@ class RepeaterHandler(BaseHandler):
                 )
 
         # Check if this is a duplicate
-        is_dupe = pkt_hash_full in self.seen_packets and not transmitted
+        is_dupe = self.is_duplicate(packet, packet_hash=pkt_hash_full) and not transmitted
 
         # Set drop reason for duplicates and count flood vs direct dups
         if is_dupe and drop_reason is None:
@@ -1021,7 +1119,8 @@ class RepeaterHandler(BaseHandler):
     def _is_crossing_route_prefix(self, prefix, packet=None):
         bridge = self.channel_bridge
         if (not bridge or bridge.peer_routing != "distinct" or prefix is None
-                or packet is None or not is_protocol_flood_candidate(packet, bridge.protocols)):
+                or packet is None or not is_protocol_flood_candidate(
+                    packet, bridge.protocols, getattr(bridge, "packet_types", {}))):
             return False
         prefix = str(prefix).upper()
         return len(prefix) in (2, 4, 6) and bridge.crossing_identity.hex().upper().startswith(prefix)
@@ -1345,11 +1444,19 @@ class RepeaterHandler(BaseHandler):
         here without revisiting that invariant.
         """
         pkt_hash = packet_hash or packet.calculate_packet_hash().hex().upper()
+        topology = getattr(self, "network_topology", None)
+        rid = getattr(packet, "_rx_radio_id", None)
+        if topology and rid is not None:
+            pkt_hash = (topology.network(rid), topology.forwarding_class(rid), pkt_hash) if topology.has_receivers else (topology.network(rid), pkt_hash)
         return pkt_hash in self.seen_packets
 
     def mark_seen(self, packet: Packet, packet_hash: Optional[str] = None):
 
         pkt_hash = packet_hash or packet.calculate_packet_hash().hex().upper()
+        topology = getattr(self, "network_topology", None)
+        rid = getattr(packet, "_rx_radio_id", None)
+        if topology and rid is not None:
+            pkt_hash = (topology.network(rid), topology.forwarding_class(rid), pkt_hash) if topology.has_receivers else (topology.network(rid), pkt_hash)
         self.seen_packets[pkt_hash] = time.time()
 
         if len(self.seen_packets) > self.max_cache_size:
@@ -1414,7 +1521,9 @@ class RepeaterHandler(BaseHandler):
         path = packet.path or bytearray()
         local_hashes = {self.local_hash_bytes[:hash_size]}
         if (self.channel_bridge and self.channel_bridge.peer_routing == "distinct"
-                and is_protocol_flood_candidate(packet, self.channel_bridge.protocols)):
+                and is_protocol_flood_candidate(
+                    packet, self.channel_bridge.protocols,
+                    getattr(self.channel_bridge, "packet_types", {}))):
             local_hashes.add(self.channel_bridge.crossing_identity[:hash_size])
         local_count = sum(
             1
@@ -1758,6 +1867,7 @@ class RepeaterHandler(BaseHandler):
             wrapped.payload_len = len(wrapped.payload)
             wrapped.path = bytearray(ack_packet.path)
             wrapped.path_len = ack_packet.path_len
+            wrapped._rx_radio_id = ack_packet._rx_radio_id
             extras.append((wrapped, delay_ms / 1000.0))
             extra -= 1
         return extras, delay_ms
@@ -1889,7 +1999,17 @@ class RepeaterHandler(BaseHandler):
             # TRACE progress is one SNR byte per hop. It must never enter the
             # ordinary direct path-consumption or flood append routines.
             bridge = self.channel_bridge
-            if (not bridge or not bridge.protocols.get("trace")
+            crossing_trace = (
+                bridge.peer_routing == "distinct"
+                and next_hop_prefix is not None
+                and bytes(next_hop_prefix) == bridge.crossing_identity
+            )
+            trace_enabled = (
+                packet_type_enabled(PAYLOAD_TYPE_TRACE, "direct", bridge.protocols,
+                                    getattr(bridge, "packet_types", {}))
+                if crossing_trace else bridge.protocols.get("trace", False)
+            )
+            if (not trace_enabled
                     or getattr(packet, "_private_peer", False) is True
                     or packet.is_marked_do_not_retransmit()
                     or self.is_duplicate(packet, packet_hash=packet_hash)
@@ -2044,6 +2164,11 @@ class RepeaterHandler(BaseHandler):
         never retried here. The bridge deadline bounds delay, link wait and backoff.
         """
 
+        peer_guard = None
+        if getattr(fwd_pkt, "_private_peer", False) is True:
+            from private_link.daemon import current_peer_guard
+            peer_guard = current_peer_guard.get()
+
         packet_deadline = (getattr(fwd_pkt, "_private_peer_deadline", None)
                            if getattr(fwd_pkt, "_private_peer", False) is True else None)
         if packet_deadline is not None:
@@ -2071,6 +2196,8 @@ class RepeaterHandler(BaseHandler):
                         return False
 
                 async with self._tx_lock:
+                    if peer_guard is not None and not peer_guard():
+                        return False
                     if deadline is not None and time.monotonic() >= deadline:
                         return False
                     if crossing_guard is not None and not crossing_guard():
@@ -2370,7 +2497,13 @@ class RepeaterHandler(BaseHandler):
                     direction_admitted = True
                     self._bridge_pending += 1
                     admitted = True
-                    token = await self.bridge_echoes.reserve(source, pkt)
+                    topology = getattr(self, 'network_topology', None)
+                    if topology:
+                        token = await self.bridge_echoes.reserve(
+                            source, pkt, source_network=topology.network(source_home),
+                            target_network=topology.network(radio_id), separate_source=topology.has_receivers)
+                    else:
+                        token = await self.bridge_echoes.reserve(source, pkt)
                     if token is None:
                         return RadioTxResult(
                             radio_id, False, failure_reason="Bridge duplicate or ledger full"
@@ -2756,6 +2889,9 @@ class RepeaterHandler(BaseHandler):
         other layouts return None and let the dispatcher/fabric choose via
         existing logic.
         """
+        topology = getattr(self, "network_topology", None)
+        if topology and rx_radio_id:
+            return topology.relay_destinations(rx_radio_id)
         fabric_cfg = self._fabric_cfg()
         if str(fabric_cfg.get("tx_mode", "default")).strip().lower() != "bridge":
             return None
@@ -2786,6 +2922,11 @@ class RepeaterHandler(BaseHandler):
         default radio first. Otherwise None: the existing fabric selection
         (default radio / tx_mode selector) stays authoritative.
         """
+        topology = getattr(self, "network_topology", None)
+        if topology:
+            if fabric_origin_tx(self._fabric_cfg()) == "all":
+                return tuple(topology.networks.values())
+            return (topology.default_radio,)
         if fabric_origin_tx(self._fabric_cfg()) != "all":
             return None
         fabric, ids = self._fabric_endpoints()
@@ -3051,6 +3192,14 @@ class RepeaterHandler(BaseHandler):
                 {"radio_id": radio_id, "noise_floor_dbm": dbm}
                 for radio_id, dbm in noise_by_radio.items()
             ]
+        fabric, _ = self._fabric_endpoints()
+        comparison = getattr(fabric, 'comparison', None) if fabric is not None else None
+        if comparison is not None:
+            stats['receiver_comparison'] = comparison.snapshot()
+            stats['receiver_comparison']['unavailable_radios'] = sorted(set(fabric.topology.members) - set(fabric.radios))
+            stats['receiver_comparison']['processing_dropped'] = getattr(self.dispatcher, 'topology_rx_dropped', 0)
+            stats['receiver_comparison']['destination_duplicates'] = fabric.network_tx_duplicates
+            stats['receiver_comparison']['destination_capacity_drops'] = fabric.network_tx_capacity_drops
         return stats
 
     def _start_background_tasks(self):

@@ -19,6 +19,7 @@ def _snapshot(section):
         "direct_routes": [],
         "disabled_channels": [],
         "protocols": {},
+        "packet_types": {},
         "peer_routing": "legacy",
         "max_pending_crossings": 64,
         "queue_ttl_seconds": 30,

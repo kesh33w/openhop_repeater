@@ -19,12 +19,12 @@ from pathlib import Path
 from openhop_core.protocol.constants import (
     MAX_TEXT_LEN,
     PAYLOAD_TYPE_GRP_TXT,
+    PAYLOAD_TYPE_GRP_DATA,
     PH_ROUTE_MASK,
     ROUTE_TYPE_FLOOD,
 )
 from openhop_core.protocol.crypto import CryptoUtils
 
-from repeater.radio_ids import configured_radio_ids
 
 
 logger = logging.getLogger(__name__)
@@ -149,6 +149,29 @@ class ChannelBridge:
             return None
         return channel, plain
 
+    def has_channel_selection(self, packet, home, disabled_channels):
+        """Keep explicit channel rules/switches ahead of opaque passthrough.
+
+        Match the MAC, not the one-byte selector. Even a supported-wire group
+        subtype that cannot be translated must not bypass its channel switch.
+        """
+        payload = bytes(packet.payload or b"")
+        if len(payload) < 19 or (len(payload) - 3) % 16:
+            return False
+        for channel in self.channels.values():
+            if payload[0] != channel.selector:
+                continue
+            try:
+                CryptoUtils.mac_then_decrypt(channel.secret[:16], channel.secret, payload[1:])
+            except ValueError:
+                continue
+            if channel.name in disabled_channels or any(
+                rule.source.name == home and rule.source_channel == channel.name
+                for rule in self.crossings
+            ):
+                return True
+        return False
+
     def plan(self, packet, home, *, repeat_local=True, allow_crossing=True):
         if home is None:
             # Origins must carry an explicit home; path length is not evidence.
@@ -212,6 +235,11 @@ class EchoLedger:
             "CREATE TABLE IF NOT EXISTS echoes (token TEXT, hash TEXT, expires REAL, state TEXT, PRIMARY KEY(token, hash))"
         )
         self.db.execute("CREATE INDEX IF NOT EXISTS echo_hash ON echoes(hash)")
+        # Keep the four-column echoes schema readable/writable by rollback
+        # releases. Missing or stale role metadata is a conservative legacy echo.
+        self.db.execute(
+            "CREATE TABLE IF NOT EXISTS echo_roles (token TEXT, hash TEXT, expires REAL, role TEXT, PRIMARY KEY(token, hash))"
+        )
         self.db.commit()
 
     @staticmethod
@@ -228,13 +256,22 @@ class EchoLedger:
             is not None
         )
 
-    def reserve(self, source, outgoing):
+    def contains_received(self, packet):
+        return self.db.execute(
+            "SELECT 1 FROM echoes e LEFT JOIN echo_roles r "
+            "ON e.token=r.token AND e.hash=r.hash AND e.expires=r.expires "
+            "WHERE e.hash=? AND e.expires>? AND (r.role IS NULL OR r.role!='source') LIMIT 1",
+            (self.digest(packet), self.clock()),
+        ).fetchone() is not None
+
+    def reserve(self, source, outgoing, *, separate_source=False):
         hashes = sorted({self.digest(source), self.digest(outgoing)})
         token = hashlib.sha256("|".join(hashes).encode()).hexdigest()
         now = self.clock()
         with self.db:
             self.db.execute("BEGIN IMMEDIATE")
             self.db.execute("DELETE FROM echoes WHERE expires<=?", (now,))
+            self.db.execute("DELETE FROM echo_roles WHERE NOT EXISTS (SELECT 1 FROM echoes e WHERE e.token=echo_roles.token AND e.hash=echo_roles.hash AND e.expires=echo_roles.expires)")
             if any(
                 self.db.execute("SELECT 1 FROM echoes WHERE hash=?", (h,)).fetchone()
                 for h in hashes
@@ -247,6 +284,12 @@ class EchoLedger:
                 "INSERT INTO echoes VALUES (?, ?, ?, 'pending')",
                 [(token, h, now + self.ttl) for h in hashes],
             )
+            if separate_source:
+                target = self.digest(outgoing)
+                self.db.executemany(
+                    "INSERT OR REPLACE INTO echo_roles VALUES (?, ?, ?, ?)",
+                    [(token, h, now + self.ttl, "target" if h == target else "source") for h in hashes],
+                )
         return token
 
     def finish(self, token, *, success):
@@ -255,6 +298,7 @@ class EchoLedger:
                 self.db.execute("UPDATE echoes SET state='sent' WHERE token=?", (token,))
             else:
                 self.db.execute("DELETE FROM echoes WHERE token=? AND state='pending'", (token,))
+                self.db.execute("DELETE FROM echo_roles WHERE NOT EXISTS (SELECT 1 FROM echoes e WHERE e.token=echo_roles.token AND e.hash=echo_roles.hash AND e.expires=echo_roles.expires)")
 
     def close(self):
         self.db.close()
@@ -327,16 +371,23 @@ class AsyncEchoLedger:
         return await asyncio.shield(wrapped)
 
     @staticmethod
-    def _freeze(packet):
-        return _FrozenDigest(bytes(packet.calculate_packet_hash()))
+    def _freeze(packet, network=None):
+        digest = bytes(packet.calculate_packet_hash())
+        if network is not None:
+            digest = hashlib.sha256(network.encode() + b'\0' + digest).digest()
+        return _FrozenDigest(digest)
 
-    async def contains(self, packet):
-        frozen = self._freeze(packet)
-        return await self._run(lambda: self._ledger.contains(frozen))
+    async def contains(self, packet, *, network=None, received_only=False):
+        frozen = self._freeze(packet, network)
+        # Honor pre-topology reservations during migration until their normal expiry.
+        legacy = self._freeze(packet)
+        contains = self._ledger.contains_received if received_only else self._ledger.contains
+        return await self._run(lambda: contains(frozen) or
+                               (network is not None and self._ledger.contains(legacy)))
 
-    async def reserve(self, source, outgoing):
-        source, outgoing = self._freeze(source), self._freeze(outgoing)
-        return await self._run(lambda: self._ledger.reserve(source, outgoing))
+    async def reserve(self, source, outgoing, *, source_network=None, target_network=None, separate_source=False):
+        source, outgoing = self._freeze(source, source_network), self._freeze(outgoing, target_network)
+        return await self._run(lambda: self._ledger.reserve(source, outgoing, separate_source=separate_source))
 
     async def finish(self, token, *, success):
         return await self._run(lambda: self._ledger.finish(token, success=success))
@@ -375,6 +426,7 @@ class BridgeSettings:
             "paused",
             "disabled_channels",
             "protocols",
+            "packet_types",
             "peer_routing",
             "reception_evidence",
             "traffic_limits",
@@ -411,16 +463,20 @@ class BridgeSettings:
         ):
             raise ValueError("Invalid channel_bridge.protocols")
         self.protocols = {name: protocols.get(name, False) for name in protocol_names}
+        from repeater.bridge_protocols import validate_packet_types
+
+        self.packet_types = copy.deepcopy(validate_packet_types(cfg.get("packet_types", {})))
         self.peer_routing = cfg.get("peer_routing", "legacy")
         if self.peer_routing not in ("legacy", "distinct"):
             raise ValueError("channel_bridge.peer_routing must be legacy or distinct")
-        if any(self.protocols.values()) and self.peer_routing != "distinct":
+        if (any(self.protocols.values()) or self.packet_types) and self.peer_routing != "distinct":
             raise ValueError(
                 "New bridge protocols require distinct peer routing and contact rediscovery"
             )
         self.native_identity = None
         self.crossing_identity = None
-        ids = configured_radio_ids(config)
+        from repeater.network_topology import bridge_radio_ids
+        ids = bridge_radio_ids(config)
         if len(ids) != 2:
             raise ValueError("channel_bridge requires exactly two distinct named radios")
         self.radio_ids = tuple(ids)
@@ -575,6 +631,12 @@ class BridgeSettings:
     def plan(self, packet, home, context, *, direct_transit=False, protocol_flood=False):
         if home not in self.radio_ids:
             return ()
+        if protocol_flood and packet.get_payload_type() in (PAYLOAD_TYPE_GRP_TXT, PAYLOAD_TYPE_GRP_DATA):
+            # A configured channel selection is authoritative, including disabled
+            # mappings. Never send both an opaque copy and a translated copy.
+            protocol_flood = not self.planner.has_channel_selection(
+                packet, home, self.disabled_channels
+            )
         if (
             direct_transit
             and (self.peer_routing == "distinct" or home in self.configured_direct_sources)

@@ -1,5 +1,6 @@
 import asyncio
 import copy
+from collections import OrderedDict
 from contextvars import ContextVar
 import logging
 import time
@@ -15,6 +16,7 @@ from openhop_core.node.handlers.protocol_request import ProtocolRequestHandler
 from openhop_core.node.handlers.protocol_response import ProtocolResponseHandler
 from openhop_core.node.handlers.text import TextMessageHandler
 from openhop_core.node.handlers.trace import TraceHandler
+from openhop_core.rf_fabric.topology import NetworkTopology
 from openhop_core.protocol import Packet
 from openhop_core.protocol.constants import (
     PAYLOAD_TYPE_GRP_DATA,
@@ -137,6 +139,12 @@ class PacketRouter:
         # Serialize injects so one local TX completes before the next is processed
         self._inject_lock = asyncio.Lock()
         self._reply_home_radio = ContextVar("reply_home_radio", default=None)
+        self._network_deliveries = OrderedDict()
+        from openhop_core.node.dispatcher import Dispatcher
+        dispatcher = getattr(self.daemon, "dispatcher", None)
+        topology = getattr(self.daemon.repeater_handler, "network_topology", None)
+        if isinstance(dispatcher, Dispatcher) and isinstance(topology, NetworkTopology) and topology.has_receivers:
+            dispatcher.destination_forwarding = True
         # Hash -> expiry time; skip delivering same PATH/protocol-response to companions more than once
         self._companion_delivered = {}
         # Safety valve: cap the number of _route_packet tasks sleeping concurrently.
@@ -462,14 +470,26 @@ class PacketRouter:
         ack_timeout_s: float = 5.0,
         home_radio_id=None,
     ):
-        if home_radio_id is None:
-            home_radio_id = self._reply_home_radio.get()
+        reply_to_radio_id = None
+        request_radio = self._reply_home_radio.get()
+        topology = getattr(self.daemon.repeater_handler, "network_topology", None)
+        if (isinstance(topology, NetworkTopology) and request_radio is not None
+                and getattr(packet, "_rx_radio_id", None) is None
+                and getattr(packet, "rx_radio_id", None) is None):
+            reply_home = topology.reply_destination(request_radio)
+            if home_radio_id is not None and home_radio_id != reply_home:
+                raise ValueError("Reply home differs from the request's network")
+            home_radio_id = reply_home
+            reply_to_radio_id = request_radio
+        elif home_radio_id is None:
+            home_radio_id = request_radio
         dispatcher = getattr(self.daemon, "dispatcher", None)
         wait_crc = None
         ack_reservation = None
         try:
             metadata = {
                 "home_radio_id": home_radio_id,
+                "reply_to_radio_id": reply_to_radio_id,
                 "rssi": getattr(packet, "rssi", 0) or getattr(packet, "_rssi", 0),
                 "snr": getattr(packet, "snr", 0.0) or getattr(packet, "_snr", 0.0),
                 "timestamp": getattr(packet, "timestamp", 0),
@@ -643,7 +663,7 @@ class PacketRouter:
                     if getattr(packet, "_private_peer", False) is True:
                         binding = getattr(self.daemon, "private_island", None)
                         if binding is not None:
-                            binding.peer_finished()
+                            binding.peer_finished(packet)
                     self._cap_drop_count += 1
                     logger.warning(
                         "In-flight task cap reached (%d/%d), dropping packet "
@@ -667,7 +687,43 @@ class PacketRouter:
         # ContextVar also keeps delayed replies isolated across simultaneous RX.
         token = self._reply_home_radio.set(getattr(packet, "_rx_radio_id", None))
         try:
-            return await self._route_packet_on_radio(packet)
+            topology = getattr(self.daemon.repeater_handler, "network_topology", None)
+            rid = getattr(packet, "_rx_radio_id", None)
+            if (not isinstance(topology, NetworkTopology) or not topology.has_receivers
+                    or rid is None or getattr(packet, "_injected_for_tx", False)
+                    or getattr(packet, "_private_peer", False)):
+                return await self._route_packet_on_radio(packet)
+            if topology.is_shadow(rid):
+                return
+            now = time.monotonic()
+            ttl = self.daemon.dispatcher.packet_filter.window_seconds
+            for key, (completed_at, future) in list(self._network_deliveries.items()):
+                if future.done() and now - completed_at > ttl:
+                    del self._network_deliveries[key]
+            # A later final-hop variant must still reach its local destination.
+            key = (topology.network(rid), packet.calculate_packet_hash().hex(),
+                   _is_direct_intermediate_hop(packet))
+            existing = self._network_deliveries.get(key)
+            if existing is not None:
+                consumed = await asyncio.shield(existing[1])
+                if not consumed:
+                    return await self.daemon.repeater_handler(packet, {
+                        "rx_radio_id": rid, "rssi": packet._rssi, "snr": packet._snr,
+                    })
+                return
+            # Never evict a pending or unexpired result to admit another packet:
+            # doing so could repeat an authenticated local side effect.
+            if len(self._network_deliveries) >= 1024:
+                self._cap_drop_count += 1
+                return
+            future = asyncio.get_running_loop().create_future()
+            self._network_deliveries[key] = (now, future)
+            consumed = True  # Failure/cancellation may follow a local side effect.
+            try:
+                consumed = await self._route_packet_on_radio(packet)
+            finally:
+                future.set_result(bool(consumed))
+                self._network_deliveries[key] = (time.monotonic(), future)
         finally:
             self._reply_home_radio.reset(token)
 
@@ -676,7 +732,12 @@ class PacketRouter:
         if getattr(packet, "_private_peer", False) is True:
             # Authenticated transit only: no local app/companion decrypt or RF logging.
             binding = getattr(self.daemon, "private_island", None)
+            from private_link.daemon import current_peer_guard
+            guard = binding.peer_guard(packet) if binding is not None else None
+            token = current_peer_guard.set(guard)
             try:
+                if guard is None or not guard():
+                    return False
                 deadline = getattr(packet, "_private_peer_deadline", None)
                 if deadline is None or time.monotonic() >= deadline:
                     return False
@@ -685,8 +746,9 @@ class PacketRouter:
                     "rx_radio_id": packet._rx_radio_id,
                 })
             finally:
+                current_peer_guard.reset(token)
                 if binding is not None:
-                    binding.peer_finished()
+                    binding.peer_finished(packet)
 
         payload_type = packet.get_payload_type()
         processed_by_injection = False
@@ -1025,3 +1087,4 @@ class PacketRouter:
                         getattr(packet, "header", 0),
                         drop_reason or "unknown",
                     )
+        return processed_by_injection or packet.is_marked_do_not_retransmit()

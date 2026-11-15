@@ -13,6 +13,7 @@ FIELDS = {
     "paused",
     "disabled_channels",
     "protocols",
+    "packet_types",
     "peer_routing",
     "traffic_limits",
     "channels",
@@ -45,6 +46,7 @@ def bridge_view(config, config_path=None):
     section.setdefault("paused", False)
     section.setdefault("disabled_channels", [])
     section.setdefault("protocols", {})
+    section.setdefault("packet_types", {})
     section.setdefault("peer_routing", "legacy")
     section.setdefault(
         "echo_database",
@@ -93,7 +95,10 @@ def bridge_candidate(config, updates, config_path=None):
         raise ValueError("Invalid bridge protocols")
     if section.get("peer_routing", "legacy") not in ("legacy", "distinct"):
         raise ValueError("Invalid bridge peer routing")
-    if any(protocols.values()) and section.get("peer_routing", "legacy") != "distinct":
+    from repeater.bridge_protocols import validate_packet_types
+
+    packet_types = validate_packet_types(section.get("packet_types", {}))
+    if (any(protocols.values()) or packet_types) and section.get("peer_routing", "legacy") != "distinct":
         raise ValueError("New bridge protocols require distinct peer routing")
     previous = config.get("channel_bridge", {}).get("channels", {})
     for name, value in list(channels.items()):

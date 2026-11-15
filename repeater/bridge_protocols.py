@@ -12,9 +12,13 @@ from openhop_core.protocol.constants import (
     MAX_PACKET_PAYLOAD,
     MAX_PATH_SIZE,
     PAYLOAD_TYPE_ACK,
+    PAYLOAD_TYPE_ADVERT,
     PAYLOAD_TYPE_ANON_REQ,
+    PAYLOAD_TYPE_GRP_DATA,
+    PAYLOAD_TYPE_GRP_TXT,
     PAYLOAD_TYPE_MULTIPART,
     PAYLOAD_TYPE_PATH,
+    PAYLOAD_TYPE_RAW_CUSTOM,
     PAYLOAD_TYPE_REQ,
     PAYLOAD_TYPE_RESPONSE,
     PAYLOAD_TYPE_TRACE,
@@ -25,7 +29,12 @@ from openhop_core.protocol.constants import (
 )
 from openhop_core.protocol.packet_utils import PathUtils
 
-_PEER_TYPES = {PAYLOAD_TYPE_REQ, PAYLOAD_TYPE_RESPONSE, PAYLOAD_TYPE_TXT_MSG, PAYLOAD_TYPE_PATH}
+_PEER_TYPES = {
+    PAYLOAD_TYPE_REQ,
+    PAYLOAD_TYPE_RESPONSE,
+    PAYLOAD_TYPE_TXT_MSG,
+    PAYLOAD_TYPE_PATH,
+}
 _ADMIN_TYPES = {
     PAYLOAD_TYPE_REQ,
     PAYLOAD_TYPE_RESPONSE,
@@ -37,6 +46,65 @@ _ADMIN_TYPES = {
 }
 _DISCOVERY_TYPES = {PAYLOAD_TYPE_TXT_MSG, PAYLOAD_TYPE_ACK, PAYLOAD_TYPE_PATH}
 
+# Only unscoped route combinations with established MeshCore forwarding behavior.
+# The absence of an override retains the pre-existing protocol bundle semantics.
+PACKET_TYPES = {
+    "req": PAYLOAD_TYPE_REQ,
+    "response": PAYLOAD_TYPE_RESPONSE,
+    "txt_msg": PAYLOAD_TYPE_TXT_MSG,
+    "ack": PAYLOAD_TYPE_ACK,
+    "advert": PAYLOAD_TYPE_ADVERT,
+    "grp_txt": PAYLOAD_TYPE_GRP_TXT,
+    "grp_data": PAYLOAD_TYPE_GRP_DATA,
+    "anon_req": PAYLOAD_TYPE_ANON_REQ,
+    "path": PAYLOAD_TYPE_PATH,
+    "trace": PAYLOAD_TYPE_TRACE,
+    "multipart": PAYLOAD_TYPE_MULTIPART,
+    "raw_custom": PAYLOAD_TYPE_RAW_CUSTOM,
+}
+DIRECT_ONLY_TYPES = {"trace", "multipart", "raw_custom"}
+_TYPE_NAMES = {value: name for name, value in PACKET_TYPES.items()}
+
+
+def validate_packet_types(overrides):
+    if not isinstance(overrides, dict) or set(overrides) - PACKET_TYPES.keys():
+        raise ValueError("Invalid bridge packet types")
+    for name, routes in overrides.items():
+        allowed = {"direct"} if name in DIRECT_ONLY_TYPES else {"flood", "direct"}
+        if (
+            not isinstance(routes, dict)
+            or not routes
+            or set(routes) - allowed
+            or any(type(value) is not bool for value in routes.values())
+        ):
+            raise ValueError("Invalid bridge packet type routes")
+    return overrides
+
+
+def packet_type_enabled(kind, route, protocols, overrides=None):
+    name = _TYPE_NAMES.get(kind)
+    if name is None or route not in ("flood", "direct"):
+        return False
+    if route == "flood" and name in DIRECT_ONLY_TYPES:
+        return False
+    selected = (overrides or {}).get(name, {})
+    if route in selected:
+        return selected[route]
+    if route == "direct" and kind in (
+        PAYLOAD_TYPE_TXT_MSG,
+        PAYLOAD_TYPE_ACK,
+        PAYLOAD_TYPE_MULTIPART,
+    ):
+        return True
+    if kind == PAYLOAD_TYPE_TRACE:
+        return bool(protocols.get("trace", False))
+    return bool(
+        protocols.get("discovery", False)
+        and kind in _DISCOVERY_TYPES
+        or protocols.get("repeater_admin", False)
+        and kind in _ADMIN_TYPES
+    )
+
 
 def crossing_route_identity(public_key):
     """Derive a stable public route marker, not a signed endpoint or secret.
@@ -47,7 +115,9 @@ def crossing_route_identity(public_key):
     public_key = bytes(public_key)
     if len(public_key) != 32:
         raise ValueError("Distinct bridge routing requires the full native public key")
-    marker = bytearray(hashlib.sha256(b"openhop:bridge:crossing:v1\0" + public_key).digest())
+    marker = bytearray(
+        hashlib.sha256(b"openhop:bridge:crossing:v1\0" + public_key).digest()
+    )
     if marker[0] == public_key[0]:
         marker[0] ^= 1
     return bytes(marker)
@@ -76,29 +146,38 @@ def _valid_peer_payload(packet):
     return kind == PAYLOAD_TYPE_ACK and size >= 4
 
 
-def _enabled(packet, protocols):
+def _valid_transit_payload(packet):
     kind = packet.get_payload_type()
-    return (
-        protocols.get("discovery", False)
-        and kind in _DISCOVERY_TYPES
-        or protocols.get("repeater_admin", False)
-        and kind in _ADMIN_TYPES
-    )
+    payload = bytes(packet.payload or b"")
+    if kind == PAYLOAD_TYPE_ADVERT:
+        # The packet router retains the existing signature/replay/rate gates.
+        return len(payload) >= 100
+    if kind in (PAYLOAD_TYPE_GRP_TXT, PAYLOAD_TYPE_GRP_DATA):
+        return len(payload) >= 19 and (len(payload) - 3) % 16 == 0
+    if kind == PAYLOAD_TYPE_RAW_CUSTOM:
+        return bool(payload)
+    if kind == PAYLOAD_TYPE_MULTIPART:
+        return len(payload) >= 5 and payload[0] & 0x0F == PAYLOAD_TYPE_ACK
+    return _valid_peer_payload(packet)
 
 
-def is_protocol_flood_candidate(packet, protocols):
+def is_protocol_flood_candidate(packet, protocols, packet_types=None):
     """Scope the unsigned marker to wire types the protocol bridge can emit."""
     return (
         packet.header & PH_ROUTE_MASK == ROUTE_TYPE_FLOOD
-        and _enabled(packet, protocols)
+        and packet_type_enabled(
+            packet.get_payload_type(), "flood", protocols, packet_types
+        )
         and _valid_frame(packet)
-        and _valid_peer_payload(packet)
+        and _valid_transit_payload(packet)
     )
 
 
-def is_protocol_flood(packet, local_prefix, protocols, crossing_prefix=None):
+def is_protocol_flood(
+    packet, local_prefix, protocols, crossing_prefix=None, packet_types=None
+):
     """Check the received flood before native routing appends this bridge hop."""
-    if not is_protocol_flood_candidate(packet, protocols):
+    if not is_protocol_flood_candidate(packet, protocols, packet_types):
         return False
     width = packet.get_path_hash_size()
     own = bytes(local_prefix[:width])
@@ -139,13 +218,15 @@ def is_legacy_direct(packet, local_prefix):
     return valid and _is_next_hop(packet, local_prefix)
 
 
-def is_protocol_direct(packet, local_prefix, protocols):
-    """Validate encrypted admin/PATH transit before native next-hop consumption."""
+def is_protocol_direct(packet, local_prefix, protocols, packet_types=None):
+    """Validate selected opaque transit before native next-hop consumption."""
     return (
         packet.header & PH_ROUTE_MASK == ROUTE_TYPE_DIRECT
-        and _enabled(packet, protocols)
+        and packet_type_enabled(
+            packet.get_payload_type(), "direct", protocols, packet_types
+        )
         and _valid_frame(packet)
-        and _valid_peer_payload(packet)
+        and _valid_transit_payload(packet)
         and _is_next_hop(packet, local_prefix)
     )
 
@@ -179,7 +260,9 @@ def append_trace_snr(packet, local_prefix, snr):
         return False
     if not isinstance(snr, (int, float)) or not math.isfinite(snr):
         return False
-    packet.path = bytearray(packet.path) + bytes([int(max(-32, min(31.75, snr)) * 4) & 0xFF])
+    packet.path = bytearray(packet.path) + bytes(
+        [int(max(-32, min(31.75, snr)) * 4) & 0xFF]
+    )
     packet.path_len += 1
     return True
 
@@ -191,14 +274,20 @@ def trace_record_fields(packet):
     route = payload[9:]
     hops = [route[i : i + width].hex().upper() for i in range(0, len(route), width)]
     details = [
-        {"hash": hops[i], "snr_raw": value, "snr_db": (value if value < 128 else value - 256) / 4}
+        {
+            "hash": hops[i],
+            "snr_raw": value,
+            "snr_db": (value if value < 128 else value - 256) / 4,
+        }
         for i, value in enumerate(packet.path)
         if i < len(hops)
     ]
     return {
         "is_trace": True,
         "original_path": hops,
-        "path_hash": "[" + ", ".join(hops[:8] + (["..."] if len(hops) > 8 else [])) + "]",
+        "path_hash": "["
+        + ", ".join(hops[:8] + (["..."] if len(hops) > 8 else []))
+        + "]",
         "path_hash_size": width,
         "forwarded_path": None,
         "path_snr_details": details,

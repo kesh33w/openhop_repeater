@@ -13,10 +13,11 @@ logger = logging.getLogger(__name__)
 class BridgeObserverFeed:
     RETRY_SECONDS = 10
 
-    def __init__(self, connection, evidence):
+    def __init__(self, connection, evidence, *, include_status=False):
         self.connection, self.evidence = connection, evidence
         self.name = connection.broker["name"]
-        self.topics = evidence.topics(self.name)
+        self.topics = evidence.topics(self.name, include_status=include_status)
+        self.include_status = include_status
         self._timer = None
         self._mid = None
         self._generation = 0
@@ -93,9 +94,12 @@ class BridgeObserverFeed:
             with self._lock:
                 if not self._active:
                     return
-            self.evidence.ingest(
-                self.name, message.topic, message.payload, retained=bool(message.retain)
+            ingest = (
+                self.evidence.ingest_status
+                if self.include_status and message.topic.endswith("/status")
+                else self.evidence.ingest
             )
+            ingest(self.name, message.topic, message.payload, retained=bool(message.retain))
         except Exception:  # noqa: BLE001 - keep optional reads off the publisher's failure path
             # Paho re-raises callback errors by default, stopping the shared
             # network thread. Even topic decoding can fail before ingest runs.

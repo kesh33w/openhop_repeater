@@ -1,6 +1,6 @@
 """Explicit origin routing validation shared by startup and configuration APIs."""
 
-from repeater.radio_ids import configured_radio_ids
+from repeater.network_topology import bridge_radio_ids as configured_radio_ids
 
 
 class BridgeHomeAssignmentError(ValueError):

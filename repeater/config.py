@@ -1219,9 +1219,11 @@ def validate_fabric_config(config: dict) -> tuple:
             f"Unknown fabric.tx_mode={tx_mode!r}. Supported: " + ", ".join(FABRIC_TX_MODES)
         )
 
+    from repeater.network_topology import topology_from_config
+    topology = topology_from_config(config)
     BridgeSettings.from_config(config)
     radio_count = len(radios_cfg) if has_radios else 1
-    return _validate_fabric_fanout(fabric_cfg, tx_mode, radio_count)
+    return _validate_fabric_fanout(fabric_cfg, tx_mode, 2 if topology else radio_count)
 
 
 # Air-setting defaults per radio_type, mirroring ``get_radio_for_board``. The
@@ -1617,9 +1619,11 @@ def build_radio_stack(config: dict):
 
     # Validate every ID before opening hardware, including bridge-disabled stacks.
     configured_radio_ids(config)
+    from repeater.network_topology import topology_from_config
+    topology = topology_from_config(config)
     BridgeSettings.from_config(config)
     radio_count = len(radios_cfg) if isinstance(radios_cfg, list) and radios_cfg else 1
-    repeat_on_ingress, origin_tx = _validate_fabric_fanout(fabric_cfg, tx_mode, radio_count)
+    repeat_on_ingress, origin_tx = _validate_fabric_fanout(fabric_cfg, tx_mode, 2 if topology else radio_count)
 
     meta = {
         "mode": "single",
@@ -1651,7 +1655,13 @@ def build_radio_stack(config: dict):
             rid = merged.pop("_radio_id")
             if logger.isEnabledFor(logging.DEBUG):
                 logger.debug("Resolved radio %r: %s", rid, _describe_radio_config(merged))
-            physical = get_radio_for_board(merged)
+            try:
+                physical = get_radio_for_board(merged)
+            except Exception:
+                if not topology or not topology.is_shadow(rid):
+                    raise
+                logger.warning("Optional shadow receiver %s unavailable; continuing without it", rid)
+                continue
             pairs.append((physical, rid))
             profile = _radio_air_profile(merged, rid)
             if profile is not None:
@@ -1660,6 +1670,8 @@ def build_radio_stack(config: dict):
         default_id = str(default_radio) if default_radio else pairs[0][1]
         radio = FabricRadio(radios=pairs, default_radio_id=default_id)
         _apply_fabric_tx_mode(radio.fabric, tx_mode)
+        if topology:
+            radio.fabric.configure_topology(topology)
 
         meta.update(
             {

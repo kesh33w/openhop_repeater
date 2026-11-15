@@ -1,6 +1,17 @@
 # Kesh's OpenHop Repeater bridge fork
 
-This is Kesh's fork of [OpenHop Repeater](https://github.com/openhop-dev/openhop_repeater), the Python MeshCore repeater daemon. It adds opt-in channel translation between two radios while retaining native local repeating. Kesh uses it on a Raspberry Pi with radios on different frequencies.
+## Changes at a glance
+
+- **Quad-radio reception:** Add two extra receive radios across two mesh frequencies. Each network keeps one designated transmitter, so extra receivers can contribute packets without transmitting themselves.
+- **Receive-only comparison mode:** Run an added radio in `shadow` mode to compare reception before enabling forwarding. Shadow traffic cannot trigger transmissions or replies.
+- **Arrival-order and duplicate handling:** Coordinate receptions from multiple radios so the first receiver does not incorrectly suppress an eligible crossing. Keep local-repeat and cross-network decisions separate.
+- **Selected channel linking:** Decrypt an authorized source channel and re-encrypt its ordinary group text for a mapped destination channel. Directional mappings and an optional text prefix make crossings explicit.
+- **Routing safeguards and live pause:** Control crossing directions and supported packet types, bound queues and traffic budgets, and pause new crossings without restarting. Saved routing changes still require a restart.
+- **Per-radio reception visibility:** Retain the receiving radio's identity and compare shared and unique packet observations. Own-transmission echo matching helps separate locally heard transmissions from other reception.
+- **Independent reception evidence:** Optionally match allowlisted observer reports to outgoing frames. A modem's transmit confirmation and another receiver hearing the frame are different evidence; neither guarantees delivery to a particular person.
+- **Optional Internet Link (iLink):** Connect compatible observer-based firmware over TLS for explicitly configured multibyte routes. It is optional and does not replace normal RF routing or guarantee delivery.
+
+This is Kesh's fork of [OpenHop Repeater](https://github.com/openhop-dev/openhop_repeater), the Python MeshCore repeater daemon. It adds selective channel linking and multi-radio reception while retaining native local repeating. Kesh uses it on a Raspberry Pi with two mesh frequencies and additional receive radios.
 
 Start with the [Kesh OpenHop bridge project hub](https://github.com/kesh33w/kesh-openhop-bridge) for the system overview, routing diagram, compatible source pins, reconstruction instructions, and recorded validation. This repository contains the Repeater daemon changes on `kesh/bridge`.
 

@@ -278,7 +278,7 @@ class ReceptionEvidence:
             return token
 
     def complete(self, token, outcome):
-        if outcome not in {"tx_confirmed", "tx_failed", "tx_uncertain"}:
+        if outcome not in {"tx_confirmed", "tx_failed", "tx_uncertain", "tx_suppressed"}:
             raise ValueError("Invalid bridge TX evidence outcome")
         with self._lock:
             item = self._pending.get(token)
@@ -286,7 +286,7 @@ class ReceptionEvidence:
                 return
             item["view"]["tx_state"] = outcome
             self._counts[outcome] += 1
-            if outcome == "tx_failed":
+            if outcome in {"tx_failed", "tx_suppressed"}:
                 item["view"]["reception_state"] = "not_applicable"
                 item["view"]["observers"] = []
             elif item["view"]["observers"]:
@@ -344,7 +344,7 @@ class ReceptionEvidence:
                 view = item["view"]
                 if (
                     self.monotonic() > item["deadline"]
-                    or view["tx_state"] == "tx_failed"
+                    or view["tx_state"] in {"tx_failed", "tx_suppressed"}
                     or observer.radio_id != view["target_radio"]
                     or observed < item["started"] - 2
                     or observed > item["started"] + self.settings.window_seconds

@@ -522,7 +522,10 @@ class PacketRouter:
                 # Use local_transmission=True to bypass forwarding logic
                 sent = await self.daemon.repeater_handler(packet, metadata, local_transmission=True)
             if not sent:
-                logger.warning("Injected packet failed local transmission")
+                if metadata.get("_repeater_drop_reason") == "TX suppressed: destination duplicate":
+                    logger.info("Injected packet suppressed as destination duplicate; no new TX")
+                else:
+                    logger.warning("Injected packet failed local transmission")
                 return False
 
             # Mark so when this packet is dequeued we don't pass to engine again (avoid double-send / double-count)

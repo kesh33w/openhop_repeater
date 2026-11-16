@@ -784,12 +784,21 @@ class RepeaterHandler(BaseHandler):
                         transmitted = True
                     else:
                         transmitted = False
-                        drop_reason = failure_reason
+                        drop_reason = (
+                            "TX suppressed: destination duplicate"
+                            if tx_result.results and all(
+                                (result.metadata or {}).get("suppressed")
+                                for result in tx_result.results
+                            ) else failure_reason
+                        )
                         self.dropped_count += 1
 
                     if len(tx_result.results) > 1 and not tx_result.all_success:
-                        logger.warning(
-                            "Fan-out %s TX failure: %s successful=%s failed=%s",
+                        failed_outcomes = [outcome for outcome in tx_result.results if not outcome.success]
+                        log = (logger.info if all((outcome.metadata or {}).get("suppressed")
+                                                for outcome in failed_outcomes) else logger.warning)
+                        log(
+                            "Fan-out %s TX outcome: %s successful=%s unconfirmed=%s",
                             "partial" if tx_result.any_success else "total",
                             f"rx_radio={rx_radio_id}" if rx_radio_id else "origin=local",
                             tx_result.successful_radio_ids,
@@ -848,6 +857,7 @@ class RepeaterHandler(BaseHandler):
                         outcomes = [outcome for outcome in destination_outcomes if outcome.radio_id == rid]
                         if destination_group_completed and not any(
                             outcome.success or outcome.error or (outcome.metadata or {}).get("tx_outcome_uncertain")
+                            or (outcome.metadata or {}).get("preserve_tx_claim")
                             for outcome in outcomes
                         ):
                             self._forward_destinations.pop(key, None)
@@ -2174,17 +2184,23 @@ class RepeaterHandler(BaseHandler):
         if packet_deadline is not None:
             deadline = packet_deadline if deadline is None else min(deadline, packet_deadline)
 
+        def reject(reason):
+            fwd_pkt._tx_metadata = {"ok": False, "reason": reason,
+                                   "retryable": False, "tx_outcome_uncertain": False,
+                                   "radio_id": preferred_tx_radio_id}
+            return False
+
         async def delayed_send():
             if deadline is not None and time.monotonic() + delay >= deadline:
-                return False
+                return reject("deadline_expired")
             await asyncio.sleep(delay)
             attempts = 2 if local_transmission or retry_unsent else 1
             for attempt in range(attempts):
                 if deadline is not None and time.monotonic() >= deadline:
-                    return False
+                    return reject("deadline_expired")
                 if attempt > 0 and not self._radio_link_down(preferred_tx_radio_id):
                     if deadline is not None and time.monotonic() + 1.0 >= deadline:
-                        return False
+                        return reject("deadline_expired")
                     logger.info("Retrying definitely-unsent TX in 1s outside the TX lock")
                     await asyncio.sleep(1.0)
 
@@ -2193,17 +2209,17 @@ class RepeaterHandler(BaseHandler):
                     if deadline is not None:
                         link_wait = min(link_wait, max(0.0, deadline - time.monotonic()))
                     if not await self._await_radio_link(link_wait, preferred_tx_radio_id):
-                        return False
+                        return reject("radio_disconnected")
 
                 async with self._tx_lock:
                     if peer_guard is not None and not peer_guard():
-                        return False
+                        return reject("peer_guard_rejected")
                     if deadline is not None and time.monotonic() >= deadline:
-                        return False
+                        return reject("deadline_expired")
                     if crossing_guard is not None and not crossing_guard():
                         # Checked after all waits, on every retry. A pause also
                         # invalidates copies queued before a subsequent resume.
-                        return False
+                        return reject("crossing_guard_rejected")
                     # ── Authoritative duty-cycle gate ──────────────────────────
                     # The upfront can_transmit() call in __call__ is advisory: it
                     # avoids scheduling packets obviously over budget, but cannot
@@ -2248,7 +2264,7 @@ class RepeaterHandler(BaseHandler):
                                     gate_id or "default",
                                     gate_ms,
                                 )
-                                return False
+                                return reject("duty_cycle_exceeded")
 
                     # Registered as the send starts: another radio of this node can
                     # hear it while it is still on the air.
@@ -2275,16 +2291,21 @@ class RepeaterHandler(BaseHandler):
                         metadata = getattr(fwd_pkt, "_tx_metadata", None)
                         metadata = metadata if isinstance(metadata, dict) else {}
                         uncertain = bool(metadata.get("tx_outcome_uncertain")) or (sent is not True and sent is not False)
-                        confirmed = sent is True and not uncertain
+                        suppressed = bool(metadata.get("suppressed"))
+                        confirmed = sent is True and not uncertain and not suppressed
                         self._note_own_send_finished(own_send, fwd_pkt, sent=confirmed)
                         if not confirmed:
                             if uncertain:
                                 fwd_pkt._tx_metadata = {**metadata, "tx_outcome_uncertain": True}
-                            logger.warning("Retransmit not confirmed (attempt %d, uncertain=%s)",
-                                           attempt + 1, uncertain)
+                            log = logger.info if suppressed else logger.warning
+                            log("Retransmit %s (attempt %d, uncertain=%s, reason=%s)",
+                                "suppressed" if suppressed else "not confirmed",
+                                attempt + 1, uncertain, metadata.get("reason", "unspecified"))
                             # Dispatcher False is its explicit rejection contract. None,
                             # unknown truthy outcomes and exceptions are not safe retries.
-                            if sent is False and not uncertain and attempt + 1 < attempts:
+                            if (sent is False and not uncertain and not suppressed
+                                    and metadata.get("retryable") is not False
+                                    and attempt + 1 < attempts):
                                 continue
                             return False
                         self._record_packet_sent(fwd_pkt)
@@ -2525,10 +2546,13 @@ class RepeaterHandler(BaseHandler):
                 success = bool(await task)
                 metadata = getattr(pkt, "_tx_metadata", None)
                 uncertain = isinstance(metadata, dict) and metadata.get("tx_outcome_uncertain")
+                suppressed = isinstance(metadata, dict) and metadata.get("suppressed")
+                preserve_claim = isinstance(metadata, dict) and metadata.get("preserve_tx_claim")
                 finish_evidence(
+                    "tx_suppressed" if suppressed else
                     "tx_uncertain" if uncertain else "tx_confirmed" if success else "tx_failed"
                 )
-                if token and not uncertain:
+                if token and not uncertain and not preserve_claim:
                     try:
                         await self.bridge_echoes.finish(token, success=success)
                     except Exception:
@@ -2554,7 +2578,9 @@ class RepeaterHandler(BaseHandler):
                     success,
                     metadata=metadata if isinstance(metadata, dict) else None,
                     raw_packet=pkt.write_to().hex(),
-                    failure_reason=None if success else "Native TX rejected, failed, or expired",
+                    failure_reason=(None if success else
+                                    metadata.get("reason") if isinstance(metadata, dict) and metadata.get("reason") else
+                                    "TX outcome uncertain" if uncertain else "Native TX rejected, failed, or expired"),
                 )
             except asyncio.CancelledError:
                 # A cancelled await may follow a write to the modem. Echo state
@@ -2615,14 +2641,17 @@ class RepeaterHandler(BaseHandler):
         for result in tx_result.results:
             metadata = result.metadata if isinstance(result.metadata, dict) else {}
             backoffs = metadata.get("lbt_backoff_delays_ms") or []
+            failure_reason = result.failure_reason or (
+                metadata.get("reason") if not result.success else None
+            )
             records.append(
                 {
                     "radio_id": result.radio_id,
                     "success": bool(result.success),
                     **({"raw_packet": result.raw_packet} if result.raw_packet is not None else {}),
                     **(
-                        {"failure_reason": result.failure_reason}
-                        if result.failure_reason is not None
+                        {"failure_reason": failure_reason}
+                        if failure_reason is not None
                         else {}
                     ),
                     "lbt_attempts": int(metadata.get("lbt_attempts", 0) or 0),

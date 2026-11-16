@@ -206,6 +206,7 @@ LBT_EGRESS_BUCKETS_QUERY = """
         FROM packet_egress INDEXED BY idx_packet_egress_time_radio
         WHERE timestamp >= ?
           AND timestamp <= ?
+          AND COALESCE(failure_reason, '') != 'destination duplicate'
     )
     SELECT
         bucket_ts,
@@ -242,6 +243,7 @@ LBT_EGRESS_DISTRIBUTION_QUERY = """
         FROM packet_egress INDEXED BY idx_packet_egress_time_radio
         WHERE timestamp >= ?
           AND timestamp <= ?
+          AND COALESCE(failure_reason, '') != 'destination duplicate'
     )
     SELECT bucket_ts, radio_id, attempts_total, COUNT(*) AS cnt
     FROM egress

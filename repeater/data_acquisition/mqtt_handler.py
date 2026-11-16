@@ -22,7 +22,7 @@ except ImportError:
     HAS_REASON_CODES = False
 
 logger = logging.getLogger("MQTTHandler")
-OBSERVER_SOFTWARE_NAME = "Kesh OpenHop Bridge"
+OBSERVER_SOFTWARE_NAME = "OpenHop multi-radio-bridge"
 
 # Custom ultra-verbose level for high-frequency per-broker publish logs.
 # Keeps default DEBUG useful while allowing deep diagnostics when needed.
@@ -1091,6 +1091,7 @@ class MeshCoreToMqttPusher:
 
         mode = str(self.config.get("repeater", {}).get("mode", "forward")).strip().lower()
         repeat_state = "on" if mode == "forward" else "off"
+        software_version = self.app_version.partition("+")[0]
 
         status = {
             "status": state,
@@ -1098,9 +1099,12 @@ class MeshCoreToMqttPusher:
             "origin": origin or self.node_name,
             "origin_id": self.public_key,
             "model": OBSERVER_SOFTWARE_NAME,
-            "firmware_version": self.app_version,
+            # MC2MQTT calls the software-stack label "firmware_version".
+            # Keep local build metadata for diagnostics, not observer cards.
+            "firmware_version": f"OpenHop {software_version}",
             "radio": radio_config or self.radio_config,
-            "client_version": f"💧{OBSERVER_SOFTWARE_NAME}/{self.app_version}",
+            "client_version": f"💧🍴 OpenHop v{software_version} multi-radio-bridge",
+            "software_build": self.app_version,
             "repeat": repeat_state,
             # Defaults first: a provider that reports real figures must win over
             # them. Spread after live_stats, as they were, they pinned errors to

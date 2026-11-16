@@ -47,7 +47,8 @@ def view(config, binding):
                           "last_valid_inbound_frame_age_seconds": getattr(
                               transport, "last_valid_inbound_frame_age_seconds", None)})
     else:
-        peers = [{"id": peer, "connected": False} for peer in sorted(
+        peers = [{"id": peer, "connected": False,
+                  "last_valid_inbound_frame_age_seconds": None} for peer in sorted(
             (section.get("transport") or {}).get("peer_fingerprints", {}))]
     routes = []
     if adapter is not None:

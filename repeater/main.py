@@ -2152,6 +2152,10 @@ class RepeaterDaemon:
         self._shutdown_started = True
         logger.info("Shutdown: stopping services and releasing hardware")
 
+        receipts = getattr(self, "bot_rf_receipts", None)
+        if receipts is not None:
+            await self._shutdown_step("bot RF receipts", receipts.close())
+
         # Stop the dispatcher first so RX stops before its radio is taken away.
         if self.dispatcher is not None and hasattr(self.dispatcher, "stop"):
             await self._shutdown_step("dispatcher", self.dispatcher.stop())
@@ -2374,6 +2378,15 @@ class RepeaterDaemon:
                     logger.error(f"Failed to start HTTP server: {e}")
             else:
                 logger.info("HTTP server startup skipped (http.enabled=false)")
+
+            # Optional proof stream is isolated from bridge availability. It sends
+            # no RF and cannot replace the companion's ordinary delivery path.
+            self.bot_rf_receipts = None
+            try:
+                from repeater.bot_rf_receipts import start_for_daemon
+                self.bot_rf_receipts = await start_for_daemon(self)
+            except Exception:
+                logger.warning("Bot RF receipt service unavailable; bridge continues", exc_info=True)
 
             # Run dispatcher (handles RX/TX via openhop_core)
             try:

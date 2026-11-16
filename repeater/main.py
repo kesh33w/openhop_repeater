@@ -17,6 +17,7 @@ from repeater.cad_radio import apply_cad_settings
 from repeater.companion.utils import (
     CompanionContactCapacityError,
     CompanionStateLoadError,
+    companion_receive_members,
     effective_max_contacts,
     enforce_companion_contact_capacity,
     format_companion_bridge_limits,
@@ -105,6 +106,7 @@ class RepeaterDaemon:
         self.radio = radio
         self.dispatcher = None
         self.repeater_handler = None
+        self.logical_observer = None
         self.local_hash = None
         self.local_identity = None
         self.identity_manager = None
@@ -532,6 +534,24 @@ class RepeaterDaemon:
                 periodic_advert_tick_func=self.run_periodic_advert_scheduler_tick,
             )
 
+            shared_bindings = self.config.get("mqtt_logical_observers", {})
+            observer_groups = self.config.get("mqtt_observation_groups", {})
+            if shared_bindings and observer_groups:
+                raise ConfigurationError("Configure logical MQTT streams or legacy groups, not both")
+            observer_groups = shared_bindings or observer_groups
+            if observer_groups:
+                from repeater.data_acquisition.logical_observer import LogicalObserver
+                pusher = self.repeater_handler.storage.mqtt_handler
+                fabric = getattr(self.radio, "fabric", None)
+                if fabric is None or pusher is None:
+                    raise ConfigurationError("Logical MQTT observers require fabric and MQTT")
+                self.logical_observer = LogicalObserver(
+                    observer_groups, fabric.topology, pusher,
+                    receiver=fabric.logical_receiver if shared_bindings else None)
+                pusher.logical_observer = self.logical_observer
+                if not shared_bindings:
+                    fabric.add_observation_callback(self.logical_observer.receive)
+
             # Storage now exists: build the served-region map and wire it into the
             # dispatcher so flood replies are re-scoped to their request's region.
             # Runs before any companion bridge is created so all share one instance.
@@ -906,6 +926,27 @@ class RepeaterDaemon:
             self._get_companion_radio_settings(
                 home
             )  # Reject an unknown home, never silently default.
+        network = settings.get("receive_network")
+        if network is not None:
+            if "receive_radio_ids" in settings:
+                raise ValueError("Companion receive_network and receive_radio_ids are exclusive")
+            fabric = getattr(self.radio, "fabric", None)
+            topology = getattr(fabric, "topology", None)
+            resolver = getattr(fabric, "logical_receiver", None)
+            if (not isinstance(network, str) or topology is None or resolver is None
+                    or network not in topology.networks
+                    or topology.networks[network] != home):
+                raise ValueError("Companion receive_network requires its designated TX home")
+            members = resolver.members(network)
+            if not members or home not in members:
+                raise ValueError("Companion receive_network has no active home membership")
+            bridge._receive_network = network
+            bridge._receive_home_radio_id = home
+            bridge._receive_fabric = fabric
+            bridge._receive_radio_ids = None
+            if companion_receive_members(bridge) != frozenset(members):
+                raise ValueError("Companion logical receive membership is invalid")
+            return
         receive = settings.get("receive_radio_ids")
         if receive is not None:
             known = set(configured_radio_ids(self.config))
@@ -916,6 +957,9 @@ class RepeaterDaemon:
             ):
                 raise ValueError("Companion receive_radio_ids must name configured radios")
             receive = frozenset(receive)
+        bridge._receive_network = None
+        bridge._receive_home_radio_id = None
+        bridge._receive_fabric = None
         bridge._receive_radio_ids = receive
 
     async def _load_companion_identities(self) -> None:
@@ -1360,9 +1404,7 @@ class RepeaterDaemon:
         if not servers:
             return
         for fs in servers:
-            receive = getattr(getattr(fs, "bridge", None), "_receive_radio_ids", None)
-            if not isinstance(receive, frozenset):
-                receive = None
+            receive = companion_receive_members(getattr(fs, "bridge", None))
             if filtered_only and receive is None:
                 continue
             if receive is not None and rx_radio_id not in receive:
@@ -2165,6 +2207,10 @@ class RepeaterDaemon:
         close_bridge = getattr(self.repeater_handler, "aclose_channel_bridge", None)
         if callable(close_bridge):
             await self._shutdown_step("bridge echo worker", close_bridge())
+
+        if getattr(self, "logical_observer", None) is not None:
+            self.radio.fabric.remove_observation_callback(self.logical_observer.receive)
+            await asyncio.to_thread(self.logical_observer.close)
 
         if self.repeater_handler and self.repeater_handler.storage:
             await self._shutdown_step(

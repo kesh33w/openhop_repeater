@@ -1,6 +1,6 @@
 """Explicit origin routing validation shared by startup and configuration APIs."""
 
-from repeater.network_topology import bridge_radio_ids as configured_radio_ids
+from repeater.network_topology import bridge_radio_ids as configured_radio_ids, topology_from_config
 
 
 class BridgeHomeAssignmentError(ValueError):
@@ -12,6 +12,22 @@ def validate_companion_home(config, settings, *, context="Companion"):
     if not isinstance(settings, dict):
         raise BridgeHomeAssignmentError(f"{context} settings must be an object")
     home = settings.get("home_radio_id")
+    if "receive_network" in settings:
+        network = settings["receive_network"]
+        if "receive_radio_ids" in settings:
+            raise BridgeHomeAssignmentError(
+                f"{context} receive_network and receive_radio_ids are exclusive"
+            )
+        try:
+            topology = topology_from_config(config)
+        except ValueError as exc:
+            raise BridgeHomeAssignmentError(f"{context} invalid receive topology: {exc}") from exc
+        if (not isinstance(network, str) or topology is None
+                or network not in topology.networks
+                or topology.networks[network] != home):
+            raise BridgeHomeAssignmentError(
+                f"{context} receive_network must name a network with its designated TX home"
+            )
     if home is None and not enabled:
         return
     if not isinstance(home, str) or home not in configured_radio_ids(config):

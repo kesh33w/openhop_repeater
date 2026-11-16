@@ -277,6 +277,44 @@ def companion_hash_str_from_identity_key(identity_key: Any) -> str:
     return f"0x{pubkey_byte:02x}"
 
 
+def companion_receive_members(bridge):
+    """Resolve one logical subscription, or preserve legacy physical filtering.
+
+    Logical membership is obtained from the current fabric resolver on every
+    delivery. A missing/reconfigured resolver cannot silently broaden a feed.
+    Returned None means the legacy unfiltered companion contract only.
+    """
+    # Only an explicitly configured instance attribute opts into logical routing.
+    # Legacy bridge proxies may synthesize unknown attributes on lookup.
+    network = getattr(bridge, "__dict__", {}).get("_receive_network")
+    if network is not None:
+        fabric = getattr(bridge, "_receive_fabric", None)
+        topology = getattr(fabric, "topology", None)
+        resolver = getattr(fabric, "logical_receiver", None)
+        home = getattr(bridge, "_receive_home_radio_id", None)
+        if (not isinstance(network, str) or topology is None or resolver is None
+                or topology.networks.get(network) != home):
+            return frozenset()
+        try:
+            members = resolver.members(network)
+            # Membership changes must not admit a shadow or cross-band source.
+            if home not in members or any(
+                topology.is_shadow(rid) or topology.network(rid) != network
+                for rid in members
+            ):
+                return frozenset()
+            return frozenset(members)
+        except (ValueError, KeyError, AttributeError):
+            return frozenset()
+    receive = getattr(bridge, "_receive_radio_ids", None)
+    return receive if isinstance(receive, frozenset) else None
+
+
+def companion_accepts_radio(bridge, radio_id):
+    members = companion_receive_members(bridge)
+    return members is None or radio_id in members
+
+
 # All companion settings writable via identity API (tcp + bridge power-user keys).
 COMPANION_SETTINGS_ALLOWLIST = frozenset(
     {
@@ -284,6 +322,8 @@ COMPANION_SETTINGS_ALLOWLIST = frozenset(
         "tcp_port",
         "bind_address",
         "home_radio_id",
+        "receive_network",
+        "receive_radio_ids",
         "tcp_timeout",
         # Persistent opt-in: trim oldest non-favourite contacts to fit max_contacts
         # at load instead of refusing to start when over capacity.

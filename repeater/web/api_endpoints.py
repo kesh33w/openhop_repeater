@@ -1922,6 +1922,9 @@ class APIEndpoints:
             if daemon is not None:
                 meta = getattr(daemon, "radio_stack_meta", None) or {}
             stats["radio_stack"] = meta
+            fabric = getattr(getattr(daemon, "radio", None), "fabric", None)
+            logical_receiver = getattr(fabric, "logical_receiver", None)
+            stats["logical_receiver"] = logical_receiver.snapshot() if logical_receiver else None
             # Authoritative per-radio air settings, so clients never have to infer
             # which profile applies to which radio of a Fabric.
             stats["radio_profiles"] = self._active_radio_profiles()
@@ -2949,6 +2952,8 @@ class APIEndpoints:
             return self._success(
                 {
                     "handler_active": handler is not None,
+                    "logical_observation": (handler.logical_observer.snapshot()
+                        if getattr(handler, "logical_observer", None) is not None else None),
                     "separate_observer_identities": getattr(handler, "separate_observer_identities", False),
                     "brokers": connected_brokers,
                     "neighbors": neighbors_status,
@@ -6937,6 +6942,9 @@ class APIEndpoints:
                 }
                 if "home_radio_id" in settings:
                     comp_settings["home_radio_id"] = settings["home_radio_id"]
+                for receive_field in ("receive_network", "receive_radio_ids"):
+                    if receive_field in settings:
+                        comp_settings[receive_field] = settings[receive_field]
                 if "tcp_timeout" in settings:
                     comp_settings["tcp_timeout"] = settings["tcp_timeout"]
                 if "trim_contacts_on_overflow" in settings:

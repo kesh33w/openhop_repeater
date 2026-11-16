@@ -28,6 +28,7 @@ from openhop_core.protocol.constants import (
     ROUTE_TYPE_TRANSPORT_DIRECT,
 )
 
+from repeater.companion.utils import companion_accepts_radio, companion_receive_members
 from repeater.engine import DropReason
 from repeater.policy_engine import PolicyDecision, PolicyEngine
 
@@ -341,8 +342,7 @@ class PacketRouter:
         return {
             key: bridge
             for key, bridge in companion_bridges.items()
-            if not isinstance(getattr(bridge, "_receive_radio_ids", None), frozenset)
-            or radio_id in bridge._receive_radio_ids
+            if companion_accepts_radio(bridge, radio_id)
         }
 
     async def deliver_bridge_egress(self, packet, source, radio_id):
@@ -356,7 +356,7 @@ class PacketRouter:
         bridges = {
             key: bridge
             for key, bridge in self._companion_bridges_for_packet(received, metadata).items()
-            if isinstance(getattr(bridge, "_receive_radio_ids", None), frozenset)
+            if companion_receive_members(bridge) is not None
         }
         if not bridges:
             return

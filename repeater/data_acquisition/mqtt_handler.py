@@ -1191,6 +1191,14 @@ class MeshCoreToMqttPusher:
     @staticmethod
     def _payload_for_connection(conn, subtopic: str, payload: dict):
         """Project a radio-specific feed without treating egress as reception."""
+        logical = payload.get("logical_observer_id")
+        members = getattr(conn, "logical_observer_members", ())
+        if logical is not None:
+            if not members or logical != conn.radio_id:
+                return None
+        elif members and subtopic in ("packets", "packet", "raw"):
+            # This connection obtains RF observations exclusively from the fabric.
+            return None
         if not conn.radio_id:
             return payload
         # Override observer metadata after the caller's payload so a repeater
@@ -1198,7 +1206,7 @@ class MeshCoreToMqttPusher:
         if getattr(conn, "observer_identity", False):
             payload = {**payload, "origin_id": conn.public_key, "origin": conn.node_name}
         if subtopic in ("packets", "packet", "raw"):
-            if payload.get("rx_radio_id") != conn.radio_id:
+            if payload.get("rx_radio_id") not in (members if logical is not None else (conn.radio_id,)):
                 return None
             return {**payload, "observer_radio_id": conn.radio_id}
         if subtopic == "status":
@@ -1220,6 +1228,25 @@ class MeshCoreToMqttPusher:
                         "rx_air_secs", "current_airtime_ms", "utilization_percent", "noise_floor"):
                 if key in selected:
                     projected["stats"][key] = selected[key]
+            if members:
+                projected["observer_members"] = list(members)
+                worker = getattr(conn, "logical_observer_worker", None)
+                if worker is not None:
+                    observation = worker.snapshot()
+                    projected["logical_observation"] = {
+                        "unique_received": observation["unique_received"].get(conn.radio_id, 0),
+                        "shared_worker": {key: observation.get(key, 0) for key in (
+                            "queue_drops", "capacity_drops", "publish_errors", "shutdown_drops")},
+                    }
+                    projected["stats"]["packets_received"] = observation["unique_received"].get(conn.radio_id, 0)
+            if members and getattr(conn, "logical_observer_receive_only", False):
+                projected["repeat"] = "off"
+                projected["observer_mode"] = "receive_only"
+                # Fabric airtime is shared by logical network, not evidence of
+                # this physical shadow transmitting. Remove it at both levels.
+                for key in ("packets_sent", "tx_air_secs", "current_airtime_ms", "utilization_percent"):
+                    projected["stats"].pop(key, None)
+                    projected["radios"][0].pop(key, None)
             return projected
         # Diagnostic records already carrying a radio may use the same feed.
         # Unattributed node-wide data cannot describe one band accurately.

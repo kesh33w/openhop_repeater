@@ -2728,6 +2728,8 @@ class RepeaterHandler(BaseHandler):
                 {
                     "radio_id": result.radio_id,
                     "success": bool(result.success),
+                    **({"timestamp": metadata["tx_completed_at"]}
+                       if metadata.get("tx_completed_at") is not None else {}),
                     **({"raw_packet": result.raw_packet} if result.raw_packet is not None else {}),
                     **(
                         {"failure_reason": failure_reason}

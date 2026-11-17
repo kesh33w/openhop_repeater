@@ -1997,7 +1997,7 @@ class SQLiteHandler:
             rows = [
                 (
                     int(packet_id),
-                    float(timestamp),
+                    float(egress.get("timestamp") if egress.get("timestamp") is not None else timestamp),
                     egress.get("radio_id"),
                     int(bool(egress.get("success"))),
                     int(egress.get("lbt_attempts") or 0),

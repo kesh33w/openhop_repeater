@@ -1,7 +1,6 @@
 """Restart-only, secret-free configuration for ordered physical TX groups."""
 import copy
 
-from repeater.cad_radio import radio_config
 from repeater.radio_ids import canonical_radio_id
 
 
@@ -15,8 +14,7 @@ def tx_group_view(config, active_topology=None):
         for entry in config.get('radios') or []:
             rid = canonical_radio_id(entry)
             if entry.get('network') == network:
-                members.append({'id': rid, 'label': entry.get('name') or rid,
-                                'cad_off': radio_config(config, rid).get('cad', {}).get('enabled') is False})
+                members.append({'id': rid, 'label': entry.get('name') or rid})
         saved = list(groups.get(primary, [primary]))
         active = (list(getattr(active_topology, "tx_groups", {}).get(primary, (primary,)))
                   if active_topology is not None else None)
@@ -42,13 +40,8 @@ def tx_group_candidate(config, update, runtime_radios):
     network = entries[primary]['network']
     if any(r not in entries or entries[r].get('network') != network for r in ordered):
         raise ValueError('Both transmitters must belong to the same logical network')
-    if len(ordered) > 1:
-        for rid in ordered:
-            if radio_config(candidate, rid).get('cad', {}).get('enabled') is not False:
-                raise ValueError('Turn CAD off explicitly on both radios before enabling dual TX')
-            if (rid not in runtime_radios or getattr(runtime_radios[rid], 'lbt_enabled', None) is not False
-                    or getattr(runtime_radios[rid], '_cad_mode_explicit', None) is not False):
-                raise ValueError('Both radios must be available with CAD confirmed off')
+    if len(ordered) > 1 and any(rid not in runtime_radios for rid in ordered):
+        raise ValueError('Both radios must be available before enabling dual TX')
     topology.setdefault('tx_groups', {})[primary] = list(ordered)
     from repeater.network_topology import topology_from_config
     topology_from_config(candidate)

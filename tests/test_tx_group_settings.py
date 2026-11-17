@@ -39,13 +39,25 @@ def test_invalid_order(ids):
         tx_group_candidate(config(), {'primary_radio_id': 'bay', 'radio_ids': ids}, runtime())
 
 
-def test_cad_runtime_and_saved_must_be_explicitly_off():
+def test_both_radios_must_be_available():
+    with pytest.raises(ValueError, match='Both radios must be available'):
+        tx_group_candidate(config(), {'primary_radio_id': 'bay', 'radio_ids': ['bay', 'rak']}, {})
+
+
+@pytest.mark.parametrize('cad', [True, False, None])
+def test_existing_cad_and_power_are_unchanged(cad):
     cfg = config()
-    with pytest.raises(ValueError, match='confirmed off'):
-        tx_group_candidate(cfg, {'primary_radio_id': 'bay', 'radio_ids': ['bay', 'rak']}, {})
-    cfg['radio']['cad']['enabled'] = True
-    with pytest.raises(ValueError, match='Turn CAD off'):
-        tx_group_candidate(cfg, {'primary_radio_id': 'bay', 'radio_ids': ['bay', 'rak']}, runtime())
+    if cad is None:
+        cfg['radio'].pop('cad')
+    else:
+        cfg['radio']['cad']['enabled'] = cad
+    before = copy.deepcopy(cfg)
+    # No CAD status properties are needed on the physical adapters.
+    patch = tx_group_candidate(cfg, {'primary_radio_id': 'bay', 'radio_ids': ['rak', 'bay']},
+                               {'bay': object(), 'rak': object()})
+    assert cfg == before
+    assert set(patch) == {'fabric'}
+    assert patch['fabric']['topology']['tx_groups']['bay'] == ['rak', 'bay']
 
 
 def test_view_has_saved_and_running_order_without_secrets():

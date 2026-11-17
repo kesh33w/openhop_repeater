@@ -2767,6 +2767,39 @@ class APIEndpoints:
 
     @cherrypy.expose
     @cherrypy.tools.json_out()
+    def tx_groups(self):
+        """Saved and running ordered TX groups; no hardware or secret fields."""
+        self._set_cors_headers()
+        if cherrypy.request.method != "GET":
+            raise cherrypy.HTTPError(405)
+        from .tx_group_settings import tx_group_view
+        from .bridge_controls import saved_snapshot
+        handler = getattr(self.daemon_instance, "repeater_handler", None)
+        return self._success(tx_group_view(saved_snapshot(self),
+                             getattr(handler, "network_topology", None)))
+
+    @cherrypy.expose
+    @cherrypy.tools.json_out()
+    @cherrypy.tools.json_in()
+    def update_tx_group(self):
+        """Stage one ordered TX group. Never restart or alter live radios."""
+        self._require_post()
+        from repeater.config_manager import _CONFIG_WRITE_LOCK
+        from .tx_group_settings import tx_group_candidate
+        with _CONFIG_WRITE_LOCK:
+            try:
+                radios, _ = physical_radios(self.daemon_instance)
+                updates = tx_group_candidate(self.config, cherrypy.request.json, radios)
+                result = self.config_manager.update_and_save(updates, live_update=False)
+            except (ValueError, TypeError, KeyError) as exc:
+                return self._error(str(exc))
+        if not result.get("success"):
+            return self._error("TX group could not be saved; running transmitters are unchanged")
+        return self._success({"saved": True, "restart_required": True,
+                              "message": "Saved for restart. Running transmitters are unchanged."})
+
+    @cherrypy.expose
+    @cherrypy.tools.json_out()
     def bridge_settings(self):
         """Authenticated saved/running configuration with no channel keys."""
         self._set_cors_headers()

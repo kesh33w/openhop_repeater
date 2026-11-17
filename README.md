@@ -2,6 +2,7 @@
 
 ## Changes at a glance
 
+- **Per-radio CAD on/off:** Choose whether each supported modem checks for channel activity before transmitting. The setting persists across restarts and only changes after a firmware acknowledgement. [Details](docs/cad-mode.md).
 - **Quad-radio reception:** Add two extra receive radios across two mesh frequencies. Each network keeps one designated transmitter, so extra receivers can contribute packets without transmitting themselves.
 - **Receive-only comparison mode:** Run an added radio in `shadow` mode to compare reception before enabling forwarding. Shadow traffic cannot trigger transmissions or replies.
 - **Arrival-order and duplicate handling:** Coordinate receptions from multiple radios so the first receiver does not incorrectly suppress an eligible crossing. Keep local-repeat and cross-network decisions separate.

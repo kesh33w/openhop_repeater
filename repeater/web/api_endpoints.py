@@ -2786,10 +2786,11 @@ class APIEndpoints:
         self._require_post()
         from repeater.config_manager import _CONFIG_WRITE_LOCK
         from .tx_group_settings import tx_group_candidate
+        from .bridge_controls import saved_snapshot
         with _CONFIG_WRITE_LOCK:
             try:
                 radios, _ = physical_radios(self.daemon_instance)
-                updates = tx_group_candidate(self.config, cherrypy.request.json, radios)
+                updates = tx_group_candidate(saved_snapshot(self), cherrypy.request.json, radios)
                 result = self.config_manager.update_and_save(updates, live_update=False)
             except (ValueError, TypeError, KeyError) as exc:
                 return self._error(str(exc))

@@ -1,6 +1,7 @@
 import concurrent.futures
 import logging
 import re
+import threading
 from pathlib import Path
 from typing import Any, Callable, Dict, Optional
 
@@ -35,6 +36,8 @@ class MeshCLI:
         self.storage_handler = storage_handler
         # This identity's ACL, for setperm and get acl.
         self.acl = acl
+        self._cad_job = None
+        self._cad_job_lock = threading.Lock()
 
         # Store event loop reference for thread-safe scheduling
         import asyncio
@@ -217,6 +220,11 @@ class MeshCLI:
                 return "Error: Use 'get acl' via serial console only"
             return self._cmd_get_acl()
 
+        elif command == "get cad" or command.startswith("get cad "):
+            return self._cmd_cad(command[7:].strip())
+        elif command.startswith("set cad "):
+            return self._cmd_cad(command[8:].strip(), write=True)
+
         # Get commands
         elif command.startswith("get "):
             return self._cmd_get(command[4:])
@@ -267,6 +275,50 @@ class MeshCLI:
 
     # ==================== Help Command ====================
 
+    def _cmd_cad(self, args, write=False):
+        from repeater.cad_radio import physical_radios, resolve_cad_radio
+        daemon = getattr(self.config_manager, "daemon", None)
+        radios, default = physical_radios(daemon)
+        if not radios:
+            return "Error: No radios available"
+        parts = args.split()
+        if not write:
+            if len(parts) > 1 or (parts and parts[0] not in radios):
+                return "Error: Unknown radio; use get cad"
+            selected = {parts[0]: radios[parts[0]]} if parts else radios
+            states = [f"{rid}: {'on' if getattr(r, 'lbt_enabled', True) else 'off'}"
+                      for rid, r in selected.items()]
+            job = self._cad_job
+            if job:
+                states.append("change pending" if not job.done() else job.result())
+            return "> " + "; ".join(states)
+        if len(parts) not in (1, 2) or parts[0].lower() not in ("on", "off", "1", "0"):
+            return "Error: set cad on|off [radio_id]"
+        if len(parts) == 1 and len(radios) > 1:
+            return "Error: Specify radio_id; use get cad"
+        try:
+            rid, _ = resolve_cad_radio(daemon, parts[1] if len(parts) == 2 else default)
+        except ValueError as exc:
+            return "Error: " + str(exc)
+        api = getattr(getattr(getattr(daemon, "http_server", None), "app", None), "api", None)
+        if not callable(getattr(api, "apply_cad_mode", None)):
+            return "Error: CAD control service unavailable"
+        # Remote CLI runs on the radio event loop. Never block it waiting for
+        # modem ACK; use the same serialized UI operation on a worker thread.
+        with self._cad_job_lock:
+            if self._cad_job and not self._cad_job.done():
+                return "Error: CAD change pending; use get cad"
+            future = concurrent.futures.Future()
+            self._cad_job = future
+            def apply():
+                try:
+                    result = api.apply_cad_mode({"radio_id": rid, "enabled": parts[0].lower() in ("on", "1")})
+                    future.set_result("saved " + rid if result.get("success") else "Error: " + str(result.get("error")))
+                except Exception as exc:
+                    future.set_result("Error: " + str(exc))
+            threading.Thread(target=apply, daemon=True, name="cad-cli").start()
+        return "Pending " + rid + "; use get cad to confirm"
+
     def _cmd_help(self, command: str) -> str:
         """Show available commands or detailed help for a specific command."""
         parts = command.split(None, 1)
@@ -276,6 +328,7 @@ class MeshCLI:
         lines = [
             "=== openHop CLI Commands ===",
             "",
+            "CAD: get cad [radio_id]; set cad on|off [radio_id] (then get cad)",
             "System:",
             "  reboot              Restart the repeater service",
             "  advert              Send self advertisement",

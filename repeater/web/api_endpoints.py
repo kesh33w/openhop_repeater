@@ -4882,9 +4882,13 @@ class APIEndpoints:
     @_serialize_cad_request
     def set_cad_enabled(self):
         """Set one radio's host/firmware CAD mode without transmitting a packet."""
+        self._require_post()
+        return self.apply_cad_mode(cherrypy.request.json or {})
+
+    @_serialize_cad_request
+    def apply_cad_mode(self, data):
+        """Shared authenticated UI/CLI implementation; callers enforce access."""
         try:
-            self._require_post()
-            data = cherrypy.request.json or {}
             enabled = data.get("enabled")
             if type(enabled) is not bool:
                 return self._error("enabled must be a boolean")

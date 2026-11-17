@@ -15,3 +15,14 @@ error, not a successful-looking toggle.
 `GET /api/cad_radios` reports `supports_cad_toggle`, `cad_enabled` (host state),
 and `cad_mode_explicit`. When explicit is false, firmware's legacy auto-CAD state
 is unmanaged; do not interpret host state as verified firmware state.
+
+## Remote CLI
+
+Authenticated administrators can run `get cad` to list current host CAD modes
+and radio IDs, or `get cad RADIO_ID` for one radio. Use
+`set cad on RADIO_ID` / `set cad off RADIO_ID` (1/0 also accepted).
+A multi-radio setup requires the explicit radio ID; no implicit all-radio change
+is made. The reply says pending because the radio event loop must remain free
+for the modem acknowledgment. Run `get cad` again to check saved/error status.
+The web CAD control service must be available. This uses the same serialized
+operation, firmware ACK requirement, and persistent configuration as the UI.

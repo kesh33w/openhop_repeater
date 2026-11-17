@@ -2166,6 +2166,7 @@ class RepeaterHandler(BaseHandler):
         retry_unsent: bool = False,
         crossing_guard=None,
         before_dispatch=None,
+        _physical_leg: bool = False,
     ):
         """Schedule a packet retransmission with delay and return the task.
 
@@ -2173,6 +2174,23 @@ class RepeaterHandler(BaseHandler):
         known-unsent result. Missing confirmation or an exception is uncertain and
         never retried here. The bridge deadline bounds delay, link wait and backoff.
         """
+
+        # Expand only a logical destination, never a physical leg recursively.
+        # No configuration means exactly the legacy single-transmitter path.
+        fabric, _ = self._fabric_endpoints()
+        topology = getattr(fabric, "topology", None)
+        primary = preferred_tx_radio_id
+        if not _physical_leg and topology is not None and primary is None:
+            primary = self._ask_fabric_tx_radio_id(fwd_pkt, getattr(fwd_pkt, "_rx_radio_id", None))
+        if not _physical_leg and topology is not None and primary is not None:
+            targets = topology.tx_targets(primary) if hasattr(topology, "tx_targets") else (primary,)
+            if len(targets) > 1:
+                return await self._schedule_ordered_tx_group(
+                    fwd_pkt, delay, airtime_ms, primary, targets,
+                    local_transmission=local_transmission, deadline=deadline,
+                    retry_unsent=retry_unsent, crossing_guard=crossing_guard,
+                    before_dispatch=before_dispatch,
+                )
 
         peer_guard = None
         if getattr(fwd_pkt, "_private_peer", False) is True:
@@ -2343,6 +2361,58 @@ class RepeaterHandler(BaseHandler):
             return False
 
         return asyncio.create_task(delayed_send())
+
+    async def _schedule_ordered_tx_group(
+        self, packet, delay, airtime_ms, primary, targets, **options
+    ):
+        """One logical claim, strictly ordered physical sends, no implicit RF retry.
+
+        Both legs traverse the normal TX lock, shared-channel airtime ledger,
+        deadline, pause, and local-echo gates. Unknown completion stops the group:
+        it is not evidence that the transmitter has stopped keying.
+        """
+        from repeater.ordered_tx import run_ordered_group
+
+        self._freeze_tx_normalisation(packet)
+        # Copy BEFORE dispatch; driver metadata and path processing from the first
+        # leg cannot change what the second leg puts on air.
+        packets = [copy.deepcopy(packet) for _ in targets]
+        fabric, _ = self._fabric_endpoints()
+
+        async def run():
+            await asyncio.sleep(delay)
+            callback = options.pop("before_dispatch", None)
+            callback_called = False
+
+            def before_dispatch(pkt):
+                nonlocal callback_called
+                if callback is not None and not callback_called:
+                    callback(pkt)
+                    callback_called = True
+
+            async def send_leg(radio_id, pkt):
+                task = await self.schedule_retransmit(
+                    pkt, 0.0, airtime_ms, preferred_tx_radio_id=radio_id,
+                    before_dispatch=before_dispatch, _physical_leg=True, **options,
+                )
+                return await task
+
+            rows = []
+            try:
+                with fabric.ordered_tx_group(primary):
+                    await run_ordered_group(targets, packets, send_leg, results=rows)
+            finally:
+                # Preserve partial confirmation even when a caller cancels the
+                # second leg. Cancellation is still propagated to the caller.
+                packet._tx_metadata = {
+                    "ok": any(row["success"] for row in rows), "radio_id": primary,
+                    "ordered_tx_results": rows,
+                    "tx_outcome_uncertain": any(row["metadata"].get("tx_outcome_uncertain", False) for row in rows),
+                    "preserve_tx_claim": any(row["success"] or row["metadata"].get("preserve_tx_claim", False) for row in rows),
+                }
+            return packet._tx_metadata["ok"]
+
+        return asyncio.create_task(run())
 
     async def schedule_retransmit_fanout(
         self,
@@ -2638,7 +2708,17 @@ class RepeaterHandler(BaseHandler):
             return None
 
         records = []
+        expanded = []
         for result in tx_result.results:
+            legs = (result.metadata or {}).get("ordered_tx_results")
+            if legs:
+                expanded.extend(RadioTxResult(
+                    row["radio_id"], row["success"], metadata=row["metadata"],
+                    raw_packet=row.get("raw_packet"), failure_reason=row.get("failure_reason"),
+                ) for row in legs)
+            else:
+                expanded.append(result)
+        for result in expanded:
             metadata = result.metadata if isinstance(result.metadata, dict) else {}
             backoffs = metadata.get("lbt_backoff_delays_ms") or []
             failure_reason = result.failure_reason or (

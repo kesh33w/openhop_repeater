@@ -1,3 +1,8 @@
+> **Optional ordered dual TX:** configure one logical frequency to transmit through
+> two radios sequentially, in either order, with per-leg results and existing
+> deduplication/airtime controls. Off by default; requires matching Core and UI.
+> [Behavior, limits and rollout](docs/ordered-dual-tx.md).
+
 # Kesh's OpenHop Repeater bridge fork
 
 ## Changes at a glance

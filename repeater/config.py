@@ -839,6 +839,7 @@ def get_radio_for_board(board_config: dict):
             ),
             preamble_length=int(radio_cfg.get("preamble_length", 16)),
             lbt_enabled=bool(tcp_cfg.get("lbt_enabled", True)),
+            cad_enabled=(radio_cfg.get("cad") or {}).get("enabled"),
             lbt_max_attempts=int(tcp_cfg.get("lbt_max_attempts", 5)),
         )
 
@@ -887,6 +888,7 @@ def get_radio_for_board(board_config: dict):
             ),
             preamble_length=int(radio_cfg.get("preamble_length", 16)),
             lbt_enabled=bool(usb_cfg.get("lbt_enabled", True)),
+            cad_enabled=(radio_cfg.get("cad") or {}).get("enabled"),
             lbt_max_attempts=int(usb_cfg.get("lbt_max_attempts", 5)),
         )
 

@@ -4860,6 +4860,9 @@ class APIEndpoints:
                 cad_symbol_num=getattr(radio, "_custom_cad_symbol_num", None)
                 or cfg.get("cad", {}).get("symbol_num", 2),
                 supports_cad=callable(getattr(radio, "perform_cad", None)),
+                supports_cad_toggle=callable(getattr(radio, "set_cad_enabled", None)),
+                cad_enabled=bool(getattr(radio, "lbt_enabled", True)),
+                cad_mode_explicit=getattr(radio, "_cad_mode_explicit", None) is not None,
             )
             result.append(runtime)
         return self._success(
@@ -4872,6 +4875,53 @@ class APIEndpoints:
                 "running": self.cad_calibration.calibration_busy,
             }
         )
+
+    @cherrypy.expose
+    @cherrypy.tools.json_out()
+    @cherrypy.tools.json_in()
+    @_serialize_cad_request
+    def set_cad_enabled(self):
+        """Set one radio's host/firmware CAD mode without transmitting a packet."""
+        try:
+            self._require_post()
+            data = cherrypy.request.json or {}
+            enabled = data.get("enabled")
+            if type(enabled) is not bool:
+                return self._error("enabled must be a boolean")
+            if self.cad_calibration.busy:
+                return self._error("Stop calibration before changing CAD mode")
+            radio_id, radio = resolve_cad_radio(self.daemon_instance, data.get("radio_id"))
+            setter = getattr(radio, "set_cad_enabled", None)
+            if not callable(setter):
+                return self._error("This radio does not support acknowledged CAD control")
+            entries = self.config.get("radios", []) or []
+            target = next((entry for entry in entries
+                           if canonical_radio_id(entry) == radio_id), None)
+            if entries and target is None:
+                return self._error("No configuration entry for this radio")
+            future = asyncio.run_coroutine_threadsafe(setter(enabled), self.event_loop)
+            try:
+                future.result(timeout=15.0)
+            except FutureTimeoutError:
+                future.cancel()
+                return self._error("CAD control timed out; refresh to check current mode")
+            effective_cad = copy.deepcopy(radio_config(self.config, radio_id).get("cad", {}) or {})
+            effective_cad["enabled"] = enabled
+            if target is not None:
+                target.setdefault("radio", {})["cad"] = effective_cad
+            else:
+                self.config.setdefault("radio", {})["cad"] = effective_cad
+            if not self.config_manager.save_to_file():
+                return self._error("CAD mode changed in memory but could not be saved for restart")
+            return self._success({
+                "message": "CAD before transmit " + ("enabled" if enabled else "disabled"),
+                "settings": {"radio_id": radio_id, "enabled": enabled},
+            })
+        except cherrypy.HTTPError:
+            raise
+        except Exception as exc:
+            logger.error("Unable to set CAD mode: %s", exc)
+            return self._error(str(exc))
 
     @cherrypy.expose
     @cherrypy.tools.json_out()
@@ -5130,6 +5180,7 @@ class APIEndpoints:
                 return self._error("cad_symbol_num must be one of: 1, 2, 4, 8, 16")
 
             settings = {
+                **copy.deepcopy(radio_config(self.config, radio_id).get("cad", {}) or {}),
                 "peak_threshold": peak,
                 "min_threshold": min_val,
                 "symbol_num": cad_symbol_num,

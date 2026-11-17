@@ -388,3 +388,35 @@ def test_stop_wsgi_accepts_legacy_empty_and_checks_named_radio(
         assert not api.cad_calibration.running
     else:
         assert api.cad_calibration.running
+
+
+def test_cad_toggle_is_per_radio_and_persistent(api, loop):
+    async def setter(enabled):
+        api.bay.lbt_enabled = enabled
+        api.bay._cad_mode_explicit = enabled
+        return True
+    api.bay.set_cad_enabled = setter
+    body(radio_id="bay", enabled=False)
+    result = api.set_cad_enabled()
+    assert result["success"] is True
+    assert api.config["radios"][1]["radio"]["cad"]["enabled"] is False
+    assert "enabled" not in api.config["radios"][0]["radio"]["cad"]
+    assert "enabled" not in api.config["radio"]["cad"]
+    body(radio_id="bay", peak=23, min_val=11, cad_symbol_num=2)
+    assert api.save_cad_settings()["success"] is True
+    assert api.config["radios"][1]["radio"]["cad"]["enabled"] is False
+
+
+def test_cad_toggle_failure_does_not_persist(api, loop):
+    async def setter(enabled):
+        raise RuntimeError("no firmware acknowledgement")
+    api.bay.set_cad_enabled = setter
+    before = copy.deepcopy(api.config)
+    body(radio_id="bay", enabled=False)
+    assert api.set_cad_enabled()["success"] is False
+    assert api.config == before
+
+
+def test_cad_toggle_rejects_nonboolean(api, loop):
+    body(radio_id="bay", enabled="false")
+    assert api.set_cad_enabled()["success"] is False

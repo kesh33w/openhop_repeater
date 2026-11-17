@@ -19,9 +19,10 @@ fabric:
 Omit `tx_groups` to retain existing behavior. Receiver/shadow roles remain
 unchanged: membership grants a physical TX only inside an intentional group, not
 independent routing, replies, or forwarding. Both radios must have matching RF
-settings and explicitly confirmed CAD off. The editor rejects unknown/enabled
-CAD; neither saving nor sending changes CAD or power. This version intentionally
-does not provide a group CAD option.
+settings. Existing CAD/LBT and power settings are left unchanged. No extra CAD
+check is added by the group; normal per-radio send behavior remains in place.
+CAD may delay a leg, but the next leg still waits for completion; a missing
+completion aborts the remaining legs. This version has no group CAD option.
 
 ## Behavior and evidence
 
@@ -48,6 +49,5 @@ does not provide a group CAD option.
 
 Implementation is opt-in and tested with simulated radios. No production
 configuration, CAD setting, power setting or radio firmware was changed, and no
-RF test packets were transmitted. Install Core, repeater and UI together; verify
-physical CAD readback before deliberately enabling a group. A radio/TX timeout
+RF test packets were transmitted. Install Core, repeater and UI together before deliberately enabling a group. A radio/TX timeout
 cannot prove reception elsewhere: independent RX evidence remains separate.

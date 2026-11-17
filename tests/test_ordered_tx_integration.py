@@ -49,13 +49,14 @@ async def test_unknown_first_result_stops_second():
 
 
 @pytest.mark.asyncio
-async def test_cad_guard_rejects_before_any_send():
+async def test_existing_cad_does_not_prevent_or_change_sequential_sends():
     r,rak=rig(('link','rak'))
     rak._cad_mode_explicit=True
     task=await r.handler.schedule_retransmit(_flood(),0,0,preferred_tx_radio_id='link')
-    with pytest.raises(ValueError,match='CAD'):
-        await task
-    assert not r.air.frames
+    assert await task
+    assert r.air.order == ['link','rak']
+    assert rak._cad_mode_explicit is True
+    assert not r.air.overlapped
 
 
 @pytest.mark.asyncio

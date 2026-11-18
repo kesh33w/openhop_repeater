@@ -400,3 +400,27 @@ async def test_runtime_releases_slot_if_reservation_is_cancelled(rig_factory):  
         await task
     assert rig.handler._bridge_pending == 0
     assert rig.air.order == []
+
+
+@pytest.mark.asyncio
+async def test_deferred_local_send_outlives_bridge_queue_ttl(rig_factory):  # noqa: F811
+    """A duty-cycle deferral longer than queue_ttl must not drop our own message.
+
+    The crossing copy is still bounded by queue_ttl.
+    """
+    import copy
+
+    from repeater.channel_bridge import Destination, PlannedSend
+
+    rig = rig_factory(queue_ttl_seconds=1)
+    source = packet()
+    local_copy, crossing_copy = copy.deepcopy(source), copy.deepcopy(source)
+    task = await rig.handler._schedule_bridge_plan(
+        source, 1.2,
+        [PlannedSend(Destination("radio", "local"), local_copy, False),
+         PlannedSend(Destination("radio", "link"), crossing_copy, True)],
+        local_transmission=True, source_home="local",
+    )
+    await asyncio.wait_for(task, timeout=10)
+    assert rig.air.order == ["local"]
+    assert crossing_copy._tx_metadata["reason"] == "deadline_expired"

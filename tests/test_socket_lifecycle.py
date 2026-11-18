@@ -53,3 +53,20 @@ async def test_optin_group_access_requires_exact_parent_mode(tmp_path):
         assert stat.S_IMODE(path.stat().st_mode)==0o660
         assert path.stat().st_gid==tmp_path.stat().st_gid
     finally: await instance.close()
+
+
+@pytest.mark.asyncio
+async def test_close_does_not_wait_for_a_connected_bot(tmp_path):
+    import asyncio
+    path=tmp_path/'proof.sock'
+    instance=server(path)
+    await instance.start()
+    reader, writer = await asyncio.open_unix_connection(str(path))
+    for _ in range(50):
+        if instance.session is not None: break
+        await asyncio.sleep(0.01)
+    try:
+        await asyncio.wait_for(instance.close(), timeout=2)
+    finally:
+        writer.close()
+    assert not path.exists()

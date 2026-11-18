@@ -1,7 +1,11 @@
 """Validate the optional topology before any hardware is opened."""
 
+import logging
+
 from openhop_core.rf_fabric.topology import NetworkTopology
 from repeater.radio_ids import configured_radio_ids
+
+logger = logging.getLogger("NetworkTopology")
 
 
 def topology_from_config(config):
@@ -17,9 +21,18 @@ def topology_from_config(config):
         or (ids[0] if ids else None)
     )
     topology = NetworkTopology(config.get("radios") or [], fabric["topology"], default)
+    # Topology networks are separate meshes. Without an explicit tx_mode, keep
+    # each repeat on its ingress network ("sticky", the core default) rather
+    # than sending every network's traffic out of default_radio, which would
+    # act as an unconfigured one-way bridge.
     topology.tx_mode = (
-        str(fabric.get("tx_mode", "default")).strip().lower() or "default"
+        str(fabric.get("tx_mode") or "sticky").strip().lower() or "sticky"
     )
+    if topology.tx_mode == "default":
+        logger.warning(
+            "fabric.tx_mode=default with fabric.topology repeats every network's "
+            "traffic only on default_radio; use sticky or bridge to keep networks separate"
+        )
     topology.repeat_on_ingress = fabric.get("repeat_on_ingress", False)
     # Receivers sharing a logical network must share all modulation settings.
     settings = {}

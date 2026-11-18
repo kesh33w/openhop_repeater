@@ -567,7 +567,11 @@ class RepeaterDaemon:
                 island = self.config.get("private_island", {})
                 if not isinstance(island, dict):
                     raise ConfigurationError("private_island must be a mapping")
-                if island.get("enabled", False) is not False:
+                enabled = island.get("enabled", False)
+                if type(enabled) is not bool:
+                    # "false", 0 or null must not start a network service.
+                    raise ConfigurationError("private_island.enabled must be true or false")
+                if enabled:
                     from private_link.daemon import install_from_config
                     self.private_island = await install_from_config(self)
             except Exception:

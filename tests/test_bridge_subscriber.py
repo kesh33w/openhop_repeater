@@ -49,3 +49,18 @@ def test_status_is_metadata_not_reception_and_rejects_wrong_identity():
     assert obj.status()['receiver_status'][0]['retained']
     row['origin_id'] = 'AB'*32
     assert not obj.ingest_status(OBSERVER.broker, topic, json.dumps(row).encode())
+
+
+def test_refused_connection_reloads_rotated_password(tmp_path, monkeypatch):
+    p = tmp_path/'credential'; p.write_text('old-fixture'); p.chmod(0o600)
+    obj, _ = evidence(); client = Mock()
+    factory = Mock(return_value=client)
+    monkeypatch.setattr('repeater.data_acquisition.bridge_subscriber.mqtt.Client', factory)
+    sub = BridgeSubscriber(SubscriberSettings.parse([settings(p)], [OBSERVER])[0], obj)
+    sub.connect()
+    assert 'callback_api_version' in factory.call_args.kwargs
+    p.write_text('new-fixture')
+    sub._connected(client, None, {}, 5)  # CONNACK: not authorised
+    client.username_pw_set.assert_called_with('fixture', 'new-fixture')
+    sub._disconnected(client, None, {}, 0, None)  # v2 argument shape
+    sub.disconnect()

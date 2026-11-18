@@ -33,7 +33,35 @@ def test_file_identity_is_not_duplicated_in_saved_config(tmp_path, save_path):
     assert "identity_key" not in saved["repeater"]
     assert config == before
 
-    previous_bytes = config_file.read_bytes()
-    config["repeater"]["identity_key"] = bytes(reversed(range(32)))
-    assert not save()
-    assert config_file.read_bytes() == previous_bytes
+    # A runtime key that differs from the file (restored backup, or both set on
+    # purpose) is persisted so it survives restart, and saving keeps working.
+    other = bytes(reversed(range(32)))
+    config["repeater"]["identity_key"] = other
+    assert save()
+    saved = yaml.safe_load(config_file.read_text())
+    assert saved["repeater"]["identity_key"] == other
+    config["repeater"]["mode"] = "monitor"
+    assert save()
+
+
+@pytest.mark.parametrize("save_path", ["manager", "legacy"])
+def test_wrapped_or_missing_identity_file_does_not_block_saves(tmp_path, save_path):
+    key = bytes(range(64))
+    key_file = tmp_path / "identity.key"
+    encoded = base64.b64encode(key)
+    key_file.write_bytes(encoded[:40] + b"\n" + encoded[40:] + b"\n")  # base64 CLI wraps
+    config_file = tmp_path / "config.yaml"
+    config = {"repeater": {"identity_file": str(key_file), "identity_key": key}, "radio_type": "null"}
+    config_file.write_text(yaml.safe_dump({"repeater": {"identity_file": str(key_file)}}))
+
+    def save():
+        if save_path == "manager":
+            return ConfigManager(str(config_file), config).save_to_file()
+        return save_config(config, str(config_file))
+
+    assert save()
+    assert "identity_key" not in yaml.safe_load(config_file.read_text())["repeater"]
+
+    key_file.unlink()
+    assert save()
+    assert yaml.safe_load(config_file.read_text())["repeater"]["identity_key"] == key

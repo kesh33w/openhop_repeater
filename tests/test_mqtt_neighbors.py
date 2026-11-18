@@ -52,6 +52,9 @@ class _FakePacket:
     def mark_do_not_retransmit(self):
         self.do_not_retransmit = True
 
+    def is_marked_do_not_retransmit(self):
+        return self.do_not_retransmit
+
     def __init__(self, payload: bytes):
         self.payload = bytearray(payload)
 
@@ -488,8 +491,12 @@ class _StubRouter:
     """Exercises the real PacketRouter RESPONSE branch against a stub daemon."""
 
     def __init__(self, scope_helper):
+        from contextvars import ContextVar
+
         self.fanned_out = []
         self.recorded = []
+        # PacketRouter tracks the request's ingress radio so replies return on it.
+        self._reply_home_radio = ContextVar("reply_home_radio", default=None)
         self.daemon = SimpleNamespace(
             neighbor_scope_helper=scope_helper,
             local_hash=0x11,
@@ -510,7 +517,9 @@ class _StubRouter:
 async def _route_response(router_stub, packet):
     from repeater.packet_router import PacketRouter
 
-    return await PacketRouter._route_packet(router_stub, packet)
+    # The fork split routing: _route_packet handles multi-radio topology
+    # bookkeeping, then _route_packet_on_radio holds the original logic.
+    return await PacketRouter._route_packet_on_radio(router_stub, packet)
 
 
 @pytest.mark.asyncio

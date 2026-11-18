@@ -46,7 +46,16 @@ async def test_unknown_ingress_does_not_refresh_a_default_radio(radio_age_rig):
 
 
 @pytest.mark.asyncio
-async def test_private_link_routing_context_is_not_rf_reception(radio_age_rig):
+async def test_private_link_routing_context_is_not_rf_reception(radio_age_rig, monkeypatch):
+    # private_link ships separately (kesh-openhop-bridge); stub its peer guard.
+    import sys
+    import types
+    from contextvars import ContextVar
+
+    stub = types.ModuleType('private_link.daemon')
+    stub.current_peer_guard = ContextVar('current_peer_guard', default=None)
+    monkeypatch.setitem(sys.modules, 'private_link', types.ModuleType('private_link'))
+    monkeypatch.setitem(sys.modules, 'private_link.daemon', stub)
     rig, clock = radio_age_rig
     await rig.dispatcher._process_received_packet(b'', -90, 4., rx_radio_id='local')
     clock[0] = 108.

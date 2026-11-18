@@ -2765,9 +2765,15 @@ class APIEndpoints:
         handler = getattr(self.daemon_instance, "repeater_handler", None)
         evidence = getattr(handler, "bridge_evidence", None)
         traffic = getattr(handler, "bridge_traffic", None)
+        identities = getattr(handler, "tx_identities", None)
         return self._success({
             "reception": (evidence or ReceptionEvidence()).status(),
             "traffic": (traffic or DirectionalTrafficGuard()).status(),
+            "antenna_identities": {
+                "enabled": bool(identities and identities.enabled),
+                "mode": getattr(identities, "mode", "rx_tx"),
+                "aliases": identities.table() if identities else [],
+            },
         })
 
     @cherrypy.expose

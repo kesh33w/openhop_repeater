@@ -190,6 +190,116 @@ paths:
               required:
               - paused
               additionalProperties: false
+  /tx_groups:
+    get:
+      tags: [Bridge]
+      summary: Read ordered TX groups
+      description: Saved and running ordered physical transmitter groups per logical network. No hardware or secret fields.
+      security:
+      - BearerAuth: []
+      - ApiKeyAuth: []
+      responses:
+        '200':
+          description: Operation result. Check success before using data.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  data:
+                    type: object
+                    properties:
+                      restart_required:
+                        type: boolean
+                      groups:
+                        type: array
+                        items:
+                          type: object
+                          properties:
+                            network:
+                              type: string
+                            primary_radio_id:
+                              type: string
+                            radio_ids:
+                              type: array
+                              items:
+                                type: string
+                            active_radio_ids:
+                              type: array
+                              nullable: true
+                              items:
+                                type: string
+                            members:
+                              type: array
+                              items:
+                                type: object
+                                properties:
+                                  id:
+                                    type: string
+                                  label:
+                                    type: string
+  /update_tx_group:
+    post:
+      tags: [Bridge]
+      summary: Save one ordered TX group for restart
+      description: Stages the transmitter order for one logical network. Running radios are never changed; a restart applies it.
+      security:
+      - BearerAuth: []
+      - ApiKeyAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [primary_radio_id, radio_ids]
+              properties:
+                primary_radio_id:
+                  type: string
+                radio_ids:
+                  type: array
+                  minItems: 1
+                  maxItems: 2
+                  items:
+                    type: string
+                  description: The primary alone, or two distinct radios on its network including the primary, in send order.
+      responses:
+        '200':
+          description: Operation result. Check success before using data.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SuccessResponse'
+  /set_cad_enabled:
+    post:
+      tags: [CAD Calibration]
+      summary: Turn CAD before transmit on or off for one radio
+      description: Applies only after the modem acknowledges, then persists for restart. Does not transmit.
+      security:
+      - BearerAuth: []
+      - ApiKeyAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [enabled]
+              properties:
+                radio_id:
+                  type: string
+                  description: Physical radio ID. Omitted or blank selects the default radio.
+                enabled:
+                  type: boolean
+      responses:
+        '200':
+          description: Operation result. Check success before using data.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SuccessResponse'
   /bridge_diagnostics:
     get:
       tags:
@@ -6490,6 +6600,32 @@ components:
                     type: integer
                   queue_full:
                     type: integer
+        antenna_identities:
+          type: object
+          description: Flood-hop aliases naming which antennas received and sent a repeat.
+          properties:
+            enabled:
+              type: boolean
+            mode:
+              type: string
+              enum: [rx_tx, tx]
+            aliases:
+              type: array
+              items:
+                type: object
+                properties:
+                  prefix:
+                    type: string
+                    description: First two bytes of the alias, as shown in packet paths.
+                  crossing_prefix:
+                    type: string
+                    description: Prefix used when the repeat crossed the bridge.
+                  rx:
+                    type: string
+                    nullable: true
+                    description: Receiving radio id; null for a per-transmitter alias.
+                  tx:
+                    type: string
     InternetLinkOptions:
       type: object
       properties:

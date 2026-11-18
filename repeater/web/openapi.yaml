@@ -190,6 +190,34 @@ paths:
               required:
               - paused
               additionalProperties: false
+  /set_cad_enabled:
+    post:
+      tags: [CAD Calibration]
+      summary: Turn CAD before transmit on or off for one radio
+      description: Applies only after the modem acknowledges, then persists for restart. Does not transmit.
+      security:
+      - BearerAuth: []
+      - ApiKeyAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [enabled]
+              properties:
+                radio_id:
+                  type: string
+                  description: Physical radio ID. Omitted or blank selects the default radio.
+                enabled:
+                  type: boolean
+      responses:
+        '200':
+          description: Operation result. Check success before using data.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SuccessResponse'
   /bridge_diagnostics:
     get:
       tags:

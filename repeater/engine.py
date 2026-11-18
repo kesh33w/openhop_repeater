@@ -2557,7 +2557,12 @@ class RepeaterHandler(BaseHandler):
                     self._egress_radio_airtime(pkt, radio_id),
                     local_transmission=local_transmission,
                     preferred_tx_radio_id=radio_id,
-                    deadline=deadline,
+                    # queue_ttl bounds bridge crossings. A non-crossing copy of a
+                    # message originated here keeps upstream's behaviour: it may
+                    # be deferred past queue_ttl by the duty-cycle limit rather
+                    # than dropped. A private-peer deadline still applies inside.
+                    deadline=(None if local_transmission and not send.crossing
+                              else deadline),
                     retry_unsent=True,
                     crossing_guard=(
                         lambda: not self.channel_bridge.paused

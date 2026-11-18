@@ -493,3 +493,33 @@ async def test_direct_ack_routes_and_redundancy_with_four_radios(
         assert sum(out.get_payload_type() == PAYLOAD_TYPE_ACK for out in outputs) == 1
     finally:
         rig.close()
+
+
+def test_topology_without_tx_mode_keeps_repeats_on_ingress_network():
+    cfg = config()
+    del cfg["fabric"]["tx_mode"]
+    topology = topology_from_config(cfg)
+    assert topology.tx_mode == "sticky"
+    assert topology.relay_destinations("link") == ("link",)
+    assert topology.relay_destinations("local") == ("local",)
+
+
+@pytest.mark.parametrize("receiver", [False, True])
+def test_locally_sent_packet_is_duplicate_when_heard_back_on_any_network(tmp_path, receiver):
+    rig = Rig(config(tmp_path, receiver=receiver))
+    try:
+        local = packet(C1)
+        rig.handler.mark_seen(local)
+        assert rig.handler.is_duplicate(local)
+        for rid in ("local", "link", "omni909", "omni910"):
+            if not receiver and rid.startswith("omni"):
+                continue  # shadows never reach the dedupe cache
+            echo = copy.deepcopy(local)
+            echo._rx_radio_id = rid
+            assert rig.handler.is_duplicate(echo), rid
+        # A different packet heard on a network is still new.
+        other = packet(C2)
+        other._rx_radio_id = "link"
+        assert not rig.handler.is_duplicate(other)
+    finally:
+        rig.close()

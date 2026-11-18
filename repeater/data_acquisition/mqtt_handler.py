@@ -22,7 +22,7 @@ except ImportError:
     HAS_REASON_CODES = False
 
 logger = logging.getLogger("MQTTHandler")
-OBSERVER_SOFTWARE_NAME = "OpenHop multi-radio-bridge"
+OBSERVER_SOFTWARE_NAME = "OpenHop quad-radio-bridge"
 
 # Custom ultra-verbose level for high-frequency per-broker publish logs.
 # Keeps default DEBUG useful while allowing deep diagnostics when needed.
@@ -1103,7 +1103,7 @@ class MeshCoreToMqttPusher:
             # Keep local build metadata for diagnostics, not observer cards.
             "firmware_version": f"OpenHop {software_version}",
             "radio": radio_config or self.radio_config,
-            "client_version": f"💧🍴 OpenHop v{software_version} multi-radio-bridge",
+            "client_version": f"💧🍴 OpenHop v{software_version} quad-radio-bridge",
             "software_build": self.app_version,
             "repeat": repeat_state,
             # Defaults first: a provider that reports real figures must win over

@@ -12,9 +12,9 @@ def test_status_labels_preserve_identity_radio_and_full_build(version,short):
     assert p.publish_status() is True
     topic,status=p.publish.call_args.args
     assert topic=='status' and p.publish.call_args.kwargs=={'retain':True,'qos':1}
-    assert status['model']=='OpenHop multi-radio-bridge'
+    assert status['model']=='OpenHop quad-radio-bridge'
     assert status['firmware_version']==f'OpenHop {short}'
-    assert status['client_version']==f'💧🍴 OpenHop v{short} multi-radio-bridge'
+    assert status['client_version']==f'💧🍴 OpenHop v{short} quad-radio-bridge'
     assert status['software_build']==version
     assert status['origin']=='observer' and status['origin_id']=='test-public-identity'
     assert status['radio']==p.radio_config and status['repeat']=='on'

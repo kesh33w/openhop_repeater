@@ -125,3 +125,31 @@ async def test_lost_physical_observation_binding_revokes(connected,mutation):
     await until(lambda:writer.closed)
     assert session.failed
     assert not any(e['type']=='barrier' for e in writer.events)
+
+
+@pytest.mark.asyncio
+async def test_unauthenticated_connection_cannot_hold_the_slot():
+    radios = {'dir909': Radio()}
+    binding = {'receivers': list(radios)}
+    server = RawReceiptServer(fabric=SimpleNamespace(get_radio=radios.__getitem__, has_rx_binding=lambda rid: True, _observation_callbacks=[]), binding=binding,
+        secret=b'x'*32, socket_path='/unused', binding_provider=lambda: binding)
+    server.fabric._observation_callbacks.append(server.observe)
+    idle_reader, idle_writer = asyncio.StreamReader(), Writer()
+    idle = asyncio.create_task(server._client(idle_reader, idle_writer))  # never authenticates
+    await until(lambda: idle_writer.events)
+    assert server.session is None
+    reader, writer = asyncio.StreamReader(), Writer()
+    bot = asyncio.create_task(server._client(reader, writer))
+    await until(lambda: writer.events)
+    session = 'real-bot-session'
+    proof = hmac.new(server.secret, (writer.events[0]['challenge']+'\0'+session).encode(), hashlib.sha256).hexdigest()
+    feed(reader, type='auth', session_id=session, proof=proof)
+    await until(lambda: any(e['type'] == 'ready' for e in writer.events))
+    assert server.session is not None and server.session.session_id == session
+    # A second authenticated client is still refused: the bot is never evicted.
+    other_reader, other_writer = asyncio.StreamReader(), Writer()
+    await server._client(other_reader, other_writer)
+    assert other_writer.closed and server.session.session_id == session
+    for r in (reader, idle_reader):
+        r.feed_eof()
+    await asyncio.wait_for(asyncio.gather(bot, idle, return_exceptions=True), 5)

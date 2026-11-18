@@ -289,8 +289,13 @@ class StorageCollector:
         USB/TCP get_status only reads cached counters. Other drivers can query
         hardware synchronously here, so do not call their status methods.
         """
-        from openhop_core.hardware.tcp_radio import TCPLoRaRadio
-        from openhop_core.hardware.usb_radio import USBLoRaRadio
+        try:
+            from openhop_core.hardware.tcp_radio import TCPLoRaRadio
+            from openhop_core.hardware.usb_radio import USBLoRaRadio
+        except ImportError:
+            # Without the hardware extra (or pyserial) there are no modem
+            # counters to read; the rest of the stats must still be served.
+            return
 
         endpoints = getattr(self.repeater_handler, "_fabric_endpoints", None)
         if not callable(endpoints):
@@ -462,7 +467,10 @@ class StorageCollector:
             system_stats["modem_disconnected"] = self.modem_status_getter()
         receive_ages = getattr(self.repeater_handler, "get_rf_receive_ages", None)
         if callable(receive_ages):
-            system_stats["rf_receive_ages"] = receive_ages()
+            try:
+                system_stats["rf_receive_ages"] = receive_ages()
+            except Exception:  # Optional detail must not drop the whole stats payload.
+                logger.debug("RF receive ages unavailable", exc_info=True)
         airtime_stats = _node_airtime_stats(self.repeater_handler)
         if airtime_stats:
             system_stats["utilization_percent"] = airtime_stats["utilization_percent"]

@@ -1,6 +1,7 @@
 """Internet Link status and bounded operational controls. Never return credentials."""
 
 import asyncio
+import contextlib
 import copy
 from types import SimpleNamespace
 
@@ -9,10 +10,30 @@ CONTROL_TIMEOUT_SECONDS = 20.0
 # The HTTP thread waits a little longer than the bounded runtime change.
 HTTP_WAIT_SECONDS = CONTROL_TIMEOUT_SECONDS + 5.0
 
-# Saves below run on the daemon event loop on purpose. The private_link
-# enrollment server read-modify-writes config.yaml on that same loop without
-# _CONFIG_WRITE_LOCK, so moving this write to a worker thread could lose a peer
-# admitted mid-save. The cost is one small fsync on an operator action.
+# Disk writes run in a worker thread so a slow fsync never stalls RF on the
+# daemon loop. The private_link enrollment server read-modify-writes
+# config.yaml on that loop under its own asyncio lock (not _CONFIG_WRITE_LOCK),
+# so every save here holds that lock: no peer can be admitted mid-save and lost.
+
+
+def _enrollment_lock(binding):
+    """The running enrollment server's lock, or a no-op when none can run."""
+    lock = getattr(getattr(getattr(binding, "service", None), "enrollment", None), "lock", None)
+    if isinstance(lock, asyncio.Lock):
+        return lock
+    return contextlib.nullcontext()
+
+
+def _save_section(api, build):
+    """Worker thread: snapshot, build and persist under the config lock."""
+    from repeater.config_manager import _CONFIG_WRITE_LOCK
+
+    with _CONFIG_WRITE_LOCK:
+        section, extra = build(copy.deepcopy(api.config.get("private_island") or {}))
+        if section is None:
+            return True, extra
+        result = api.config_manager.update_and_save({"private_island": section}, live_update=False)
+        return bool(result.get("success")), extra
 
 
 def candidate(config, updates):
@@ -109,41 +130,50 @@ async def update(api, updates):
     binding = getattr(api.daemon_instance, "private_island", None)
     if binding is None or binding.closed or getattr(binding, "paused", False) or binding.service is None:
         raise ValueError("Internet Link is not running")
-    # This coroutine does not yield. Enrollment also publishes configuration without
-    # yielding, so a save cannot overwrite a newly admitted peer or its routes.
-    from repeater.config_manager import _CONFIG_WRITE_LOCK
 
-    with _CONFIG_WRITE_LOCK:
+    def build(_section):
         section, parsed, limit = candidate(api.config, updates)
-        result = api.config_manager.update_and_save({"private_island": section}, live_update=False)
-        if not result.get("success"):
-            return False
-        binding.adapter.config = parsed
-        binding.limit = limit
+        return section, (parsed, limit)
+
+    # Pending while the save is off the loop, so a concurrent enable/disable
+    # cannot interleave with it.
+    api._internet_link_control_pending = True
+    try:
+        async with _enrollment_lock(binding):
+            saved, (parsed, limit) = await asyncio.to_thread(_save_section, api, build)
+    finally:
+        api._internet_link_control_pending = False
+    if not saved:
+        return False
+    # Runtime routing objects are only ever changed on the daemon loop.
+    binding.adapter.config = parsed
+    binding.limit = limit
     return True
 
 
 async def _set_enabled(api, enabled):
     from private_link.daemon import _configuration, install_from_config
-    from repeater.config_manager import _CONFIG_WRITE_LOCK
 
     try:
         daemon = api.daemon_instance
         binding = getattr(daemon, "private_island", None)
-        # Configuration and enrollment publication share the daemon event loop.
-        # Do not yield while snapshotting/persisting or an admitted peer could be lost.
-        with _CONFIG_WRITE_LOCK:
-            section = copy.deepcopy(api.config.get("private_island") or {})
+
+        def build(section):
+            parsed = None
             if enabled:
                 section["enabled"] = True
                 parsed = _configuration(SimpleNamespace(config={**api.config, "private_island": section}))
                 if (section.get("transport") or {}).get("enabled") is not True:
                     raise ValueError("Internet Link transport is not configured")
             section["enabled"] = enabled
-            if api.config.get("private_island", {}).get("enabled") is not enabled:
-                result = api.config_manager.update_and_save({"private_island": section}, live_update=False)
-                if not result.get("success"):
-                    return False
+            if api.config.get("private_island", {}).get("enabled") is enabled:
+                return None, parsed  # Already saved in this state.
+            return section, parsed
+
+        async with _enrollment_lock(binding):
+            saved, parsed = await asyncio.to_thread(_save_section, api, build)
+        if not saved:
+            return False
         try:
             # Bounded, so a hung TLS bind or peer handshake cannot leave every
             # later control refused as "already pending" until restart.

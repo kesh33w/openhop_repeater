@@ -60,10 +60,9 @@ The crossing prefix is used when the packet crossed the bridge.
 
 The first experiment (2026-11-18) was deployed by copying four files into the
 release's virtualenv on the Pi (`/opt/openhop-production/releases/08d976a…`).
-That code is now committed to `feat/ordered-dual-tx` and
-`feat/ordered-tx-groups`. Deploy those branches through the normal upgrade
-instead of copying files again, so the running code always matches git and an
-upgrade cannot silently revert it.
+That code is committed on `kesh/bridge` and released as `kesh-2026.11.18`.
+Deploy through the hub's upgrade guide instead of copying files again, so the
+running code always matches git and an upgrade cannot silently revert it.
 
 The first deploy script also generated Ed25519 key pairs and stored their
 private halves in `/etc/openhop_repeater/tx-experiment-identities.json`. Only

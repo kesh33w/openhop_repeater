@@ -4,7 +4,7 @@
 import asyncio
 import copy
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, Mock
 
 import pytest
 from openhop_core.companion.contact_store import ContactStore
@@ -621,8 +621,21 @@ async def test_native_short_prefix_collisions_do_not_become_virtual_crossings(ri
 async def test_trace_helper_uses_engine_trace_eligibility(protocols, packet_types, crosses):
     from types import SimpleNamespace
 
-    handler = AsyncMock()
-    handler.channel_bridge = SimpleNamespace(protocols=protocols, packet_types=packet_types)
+    class Handler:
+        """Awaitable like the engine; every other helper is a synchronous mock."""
+
+        def __init__(self):
+            self.channel_bridge = SimpleNamespace(protocols=protocols, packet_types=packet_types)
+            self.await_count = 0
+            self._mocks = {}
+
+        async def __call__(self, *args, **kwargs):
+            self.await_count += 1
+
+        def __getattr__(self, name):
+            return self._mocks.setdefault(name, Mock())
+
+    handler = Handler()
     helper = TraceHelper(LOCAL_HASH, handler, AsyncMock())
     packet = trace()
     packet._rx_radio_id = "local"

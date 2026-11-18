@@ -610,3 +610,25 @@ async def test_native_short_prefix_collisions_do_not_become_virtual_crossings(ri
     assert await rig.handler(packet, _rx("local"))
     assert rig.air.order == ["local"]
     assert rig.sent_packets[-1][1].path == suffix[:1]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("protocols,packet_types,crosses", [
+    ({"trace": False}, {"trace": {"direct": True}}, True),
+    ({"trace": True}, {"trace": {"direct": False}}, False),
+    ({"trace": True}, {}, True),
+])
+async def test_trace_helper_uses_engine_trace_eligibility(protocols, packet_types, crosses):
+    from types import SimpleNamespace
+
+    handler = AsyncMock()
+    handler.channel_bridge = SimpleNamespace(protocols=protocols, packet_types=packet_types)
+    helper = TraceHelper(LOCAL_HASH, handler, AsyncMock())
+    packet = trace()
+    packet._rx_radio_id = "local"
+    packet._snr = 2
+    try:
+        await helper.process_trace_packet(packet)
+    except Exception:
+        pass  # The mock handler cannot finish native processing; only hand-off matters.
+    assert handler.await_count == (1 if crosses else 0)

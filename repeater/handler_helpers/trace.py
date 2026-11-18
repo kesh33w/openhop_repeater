@@ -152,7 +152,13 @@ class TraceHelper:
 
             bridge = getattr(self.repeater_handler, "channel_bridge", None)
             protocols = getattr(bridge, "protocols", None)
-            if (isinstance(protocols, dict) and protocols.get("trace")
+            # Same eligibility the engine applies, so packet_types.trace.direct
+            # (with or without protocols.trace) takes effect consistently.
+            from openhop_core.protocol.constants import PAYLOAD_TYPE_TRACE
+            from repeater.bridge_protocols import packet_type_enabled
+            if (isinstance(protocols, dict)
+                    and packet_type_enabled(PAYLOAD_TYPE_TRACE, "direct", protocols,
+                                            getattr(bridge, "packet_types", {}))
                     and not self._is_trace_complete(packet, trace_bytes, hash_width)):
                 # Preserve received progress until the engine validates and
                 # schedules the crossing. It records the actual TX result once.

@@ -108,3 +108,79 @@ def test_one_byte_paths_are_never_tagged_or_rewritten(crossing):
     p = packet(1, alias, direct=True)
     assert ids.canonical_direct(p) is p
     assert ids.prefixes(1) == set()
+
+
+def pair_identities(enabled=True, radio_ids=('directional', 'rak', 'bay'), **extra):
+    native = bytes.fromhex('bd6e' + '11' * 30)
+    section = {'enabled': enabled, 'mode': 'rx_tx', **extra}
+    return TxIdentities({'tx_identity_experiment': section}, native,
+                        crossing_route_identity(native), radio_ids=list(radio_ids))
+
+
+def test_pair_aliases_are_unique_stable_and_tabled():
+    ids = pair_identities()
+    assert len(ids.pairs) == 9
+    heads = [key[:2] for key in ids.aliases] + [ids.native[:2], ids.crossing[:2]]
+    assert len(heads) == len(set(heads))
+    assert pair_identities().pairs == ids.pairs  # Same node, same radios: same aliases.
+    rows = {(r['rx'], r['tx']): r['prefix'] for r in ids.table()}
+    assert rows[('bay', 'rak')] == ids.pairs[('bay', 'rak')][0][:2].hex()
+
+
+@pytest.mark.parametrize('crossing', [False, True])
+def test_tag_names_receiving_and_transmitting_antenna(crossing):
+    ids = pair_identities()
+    canonical = ids.crossing if crossing else ids.native
+    seen = set()
+    for rx in ('directional', 'bay'):
+        for tx in ('directional', 'rak'):
+            p = packet(2, canonical)
+            p._rx_radio_id = rx
+            assert ids.tag(p, tx)
+            key, cross = ids.pairs[(rx, tx)]
+            assert bytes(p.path[-2:]) == (cross if crossing else key)[:2]
+            seen.add(bytes(p.path[-2:]))
+            p.header = ROUTE_TYPE_DIRECT
+            assert bytes(ids.canonical_direct(p).path[-2:]) == canonical[:2]
+    assert len(seen) == 4
+
+
+def test_retag_of_tagged_copy_names_its_own_transmitter():
+    ids = pair_identities()
+    p = packet(2, ids.native)
+    p._rx_radio_id = 'bay'
+    assert ids.tag(p, 'directional') and ids.tag(p, 'rak')
+    assert bytes(p.path[-2:]) == ids.pairs[('bay', 'rak')][0][:2]
+
+
+def test_legacy_tx_aliases_still_recognised_in_pair_mode():
+    legacy = identities()
+    keys = {rid: key.hex() for rid, (key, _) in legacy.radios.items()}
+    ids = TxIdentities({'tx_identity_experiment': {'enabled': True, 'radios': keys}},
+                       legacy.native, legacy.crossing, radio_ids=['directional', 'rak'])
+    assert ids.mode == 'rx_tx' and ids.pairs
+    old_route = packet(2, legacy.radios['rak'][0], direct=True)
+    assert bytes(ids.canonical_direct(old_route).path[-2:]) == legacy.native[:2]
+    # Without a known receiving radio, the per-transmitter alias is used.
+    p = packet(2, ids.native)
+    assert ids.tag(p, 'rak') and bytes(p.path[-2:]) == legacy.radios['rak'][0][:2]
+
+
+def test_no_experiment_section_means_no_aliases():
+    ids = TxIdentities({}, bytes.fromhex('bd6e' + '11' * 30), radio_ids=['a', 'b'])
+    assert not ids.enabled and not ids.aliases and ids.table() == []
+
+
+@pytest.mark.asyncio
+async def test_single_transmitter_send_is_tagged_with_its_pair():
+    from tests.test_ordered_tx_integration import rig
+    r, _ = rig(('link', 'rak'))
+    ids = pair_identities(radio_ids=('local', 'link', 'rak'))
+    r.handler.tx_identities = ids
+    p = packet(2, ids.native)
+    p._rx_radio_id = 'link'
+    task = await r.handler.schedule_retransmit(p, 0, 0, preferred_tx_radio_id='local')
+    assert await task
+    sent = Packet()
+    sent.read_from(r.air.frames[-1][1])
+    assert bytes(sent.path[-2:]) == ids.pairs[('link', 'local')][0][:2]

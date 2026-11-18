@@ -217,6 +217,12 @@ class RepeaterHandler(BaseHandler):
             self.channel_bridge.crossing_identity if self.channel_bridge else None,
             radio_ids=configured_radio_ids(config),
         )
+        if self.tx_identities.enabled:
+            for row in self.tx_identities.table():
+                logger.info(
+                    "TX identity alias %s (crossing %s): rx=%s tx=%s",
+                    row["prefix"], row["crossing_prefix"], row["rx"] or "any", row["tx"],
+                )
         self.bridge_evidence = ReceptionEvidence(
             self.channel_bridge.evidence_settings if self.channel_bridge else None
         )
@@ -2238,6 +2244,18 @@ class RepeaterHandler(BaseHandler):
                     before_dispatch=before_dispatch,
                 )
 
+        # Single-transmitter sends carry the antenna-pair alias too; ordered
+        # groups tag each physical leg in _schedule_ordered_tx_group.
+        identities = getattr(self, "tx_identities", None)
+        tx_radio = primary if primary is not None else preferred_tx_radio_id
+        if (identities is not None and identities.enabled and not _physical_leg
+                and tx_radio is not None):
+            # Settle send-time path normalisation first so it cannot undo the tag.
+            self._freeze_tx_normalisation(fwd_pkt)
+            if identities.tag(fwd_pkt, tx_radio):
+                logger.debug("TX identity rx=%s tx=%s path=%s",
+                             getattr(fwd_pkt, "_rx_radio_id", None), tx_radio, fwd_pkt.path.hex())
+
         peer_guard = None
         if getattr(fwd_pkt, "_private_peer", False) is True:
             from private_link.daemon import current_peer_guard
@@ -3272,6 +3290,9 @@ class RepeaterHandler(BaseHandler):
         stats = {
             "local_hash": local_hash_str,
             "duplicate_cache_size": len(self.seen_packets),
+            # Which antenna pair each of our flood-hop aliases stands for.
+            "tx_identity_aliases": (self.tx_identities.table()
+                                    if getattr(self, "tx_identities", None) else []),
             "cache_ttl": self.cache_ttl,
             "rx_count": self.rx_count,
             "forwarded_count": self.forwarded_count,

@@ -37,9 +37,7 @@ def raw(value=None):
 def test_first_late_copy_and_path_variant(first, second):
     times = iter([10, 11, 12])
     walls = iter([100, 101, 102])
-    r = LogicalReceiver(
-        topology(), clock=lambda: next(times), wall_clock=lambda: next(walls)
-    )
+    r = LogicalReceiver(topology(), clock=lambda: next(times), wall_clock=lambda: next(walls))
     initial = []
     updates = []
     r.subscribe("smf909", initial.append)
@@ -80,18 +78,13 @@ def test_concurrent_ears_and_bounded_history():
     with ThreadPoolExecutor(max_workers=8) as pool:
         list(
             pool.map(
-                lambda n: r.observe(
-                    raw(), -90, n, rx_radio_id=["dir909", "v3909"][n % 2]
-                ),
+                lambda n: r.observe(raw(), -90, n, rx_radio_id=["dir909", "v3909"][n % 2]),
                 range(40),
             )
         )
     assert len(initial) == 1 and len(updates) == 40
     assert [x.observation_count for x in updates] == list(range(1, 41))
-    assert (
-        r.snapshot()["history_not_retained"] == 8
-        and len(updates[-1].observations) == 32
-    )
+    assert r.snapshot()["history_not_retained"] == 8 and len(updates[-1].observations) == 32
 
 
 def test_network_shadow_membership_isolation():
@@ -168,12 +161,7 @@ def test_callback_failure_and_no_retroactive_subscription():
     r.observe(raw(), rx_radio_id="dir909")
     r.subscribe("smf909", late.append)
     r.observe(raw(), rx_radio_id="v3909")
-    assert (
-        len(bad) == 2
-        and len(good) == 1
-        and not late
-        and r.snapshot()["subscriber_errors"] == 1
-    )
+    assert len(bad) == 2 and len(good) == 1 and not late and r.snapshot()["subscriber_errors"] == 1
     r.observe(raw(123), rx_radio_id="v3909")
     assert len(late) == 1
 
@@ -212,10 +200,7 @@ def test_invalid_unknown_closed_and_unsubscribe():
     r.close()
     with pytest.raises(RuntimeError):
         r.subscribe("smf909", events.append)
-    assert (
-        r.observe(raw(), rx_radio_id="dir909") is None
-        and r.snapshot()["closed_drops"] == 1
-    )
+    assert r.observe(raw(), rx_radio_id="dir909") is None and r.snapshot()["closed_drops"] == 1
 
 
 def test_fabric_keeps_physical_forwarding_and_shadow_gate():
@@ -231,9 +216,7 @@ def test_fabric_keeps_physical_forwarding_and_shadow_gate():
     f.set_legacy_rx_callback(
         lambda data, rssi, snr, *, rx_radio_id=None: physical.append(rx_radio_id)
     )
-    f.add_observation_callback(
-        lambda data, rssi, snr, **kw: observed.append(kw["rx_radio_id"])
-    )
+    f.add_observation_callback(lambda data, rssi, snr, **kw: observed.append(kw["rx_radio_id"]))
     for rid in ["v3909", "dir909", "rak"]:
         f._on_radio_rx(rid, raw(), -90, 5)
     assert [e.stream_id for e in logical] == ["smf909", "shadow:rak"]

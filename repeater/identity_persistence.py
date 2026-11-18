@@ -1,4 +1,5 @@
 """Keep a loaded file-backed identity out of persisted configuration."""
+
 import base64
 import binascii
 import copy
@@ -29,18 +30,20 @@ def config_for_persistence(config):
     Refusing to save instead would block every later configuration change.
     """
     candidate = copy.deepcopy(config)
-    repeater = candidate.get('repeater') or {}
-    identity_file = repeater.get('identity_file')
-    if not identity_file or 'identity_key' not in repeater:
+    repeater = candidate.get("repeater") or {}
+    identity_file = repeater.get("identity_file")
+    if not identity_file or "identity_key" not in repeater:
         return candidate
-    runtime_key = repeater['identity_key']
+    runtime_key = repeater["identity_key"]
     if isinstance(runtime_key, str):
         try:
             runtime_key = bytes.fromhex(runtime_key)
         except ValueError:
             return candidate
-    if isinstance(runtime_key, (bytes, bytearray)) and _read_identity_file(identity_file) == bytes(runtime_key):
-        del repeater['identity_key']
+    if isinstance(runtime_key, (bytes, bytearray)) and _read_identity_file(identity_file) == bytes(
+        runtime_key
+    ):
+        del repeater["identity_key"]
     else:
         logger.warning(
             "identity_key differs from identity_file (or the file is unreadable); "

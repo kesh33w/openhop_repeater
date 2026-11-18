@@ -277,6 +277,7 @@ class MeshCLI:
 
     def _cmd_cad(self, args, write=False):
         from repeater.cad_radio import physical_radios, resolve_cad_radio
+
         daemon = getattr(self.config_manager, "daemon", None)
         radios, default = physical_radios(daemon)
         if not radios:
@@ -286,8 +287,10 @@ class MeshCLI:
             if len(parts) > 1 or (parts and parts[0] not in radios):
                 return "Error: Unknown radio; use get cad"
             selected = {parts[0]: radios[parts[0]]} if parts else radios
-            states = [f"{rid}: {'on' if getattr(r, 'lbt_enabled', True) else 'off'}"
-                      for rid, r in selected.items()]
+            states = [
+                f"{rid}: {'on' if getattr(r, 'lbt_enabled', True) else 'off'}"
+                for rid, r in selected.items()
+            ]
             job = self._cad_job
             if job:
                 states.append("change pending" if not job.done() else job.result())
@@ -310,12 +313,20 @@ class MeshCLI:
                 return "Error: CAD change pending; use get cad"
             future = concurrent.futures.Future()
             self._cad_job = future
+
             def apply():
                 try:
-                    result = api.apply_cad_mode({"radio_id": rid, "enabled": parts[0].lower() in ("on", "1")})
-                    future.set_result("saved " + rid if result.get("success") else "Error: " + str(result.get("error")))
+                    result = api.apply_cad_mode(
+                        {"radio_id": rid, "enabled": parts[0].lower() in ("on", "1")}
+                    )
+                    future.set_result(
+                        "saved " + rid
+                        if result.get("success")
+                        else "Error: " + str(result.get("error"))
+                    )
                 except Exception as exc:
                     future.set_result("Error: " + str(exc))
+
             threading.Thread(target=apply, daemon=True, name="cad-cli").start()
         return "Pending " + rid + "; use get cad to confirm"
 

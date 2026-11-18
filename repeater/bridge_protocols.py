@@ -115,9 +115,7 @@ def crossing_route_identity(public_key):
     public_key = bytes(public_key)
     if len(public_key) != 32:
         raise ValueError("Distinct bridge routing requires the full native public key")
-    marker = bytearray(
-        hashlib.sha256(b"openhop:bridge:crossing:v1\0" + public_key).digest()
-    )
+    marker = bytearray(hashlib.sha256(b"openhop:bridge:crossing:v1\0" + public_key).digest())
     if marker[0] == public_key[0]:
         marker[0] ^= 1
     return bytes(marker)
@@ -165,17 +163,13 @@ def is_protocol_flood_candidate(packet, protocols, packet_types=None):
     """Scope the unsigned marker to wire types the protocol bridge can emit."""
     return (
         packet.header & PH_ROUTE_MASK == ROUTE_TYPE_FLOOD
-        and packet_type_enabled(
-            packet.get_payload_type(), "flood", protocols, packet_types
-        )
+        and packet_type_enabled(packet.get_payload_type(), "flood", protocols, packet_types)
         and _valid_frame(packet)
         and _valid_transit_payload(packet)
     )
 
 
-def is_protocol_flood(
-    packet, local_prefix, protocols, crossing_prefix=None, packet_types=None
-):
+def is_protocol_flood(packet, local_prefix, protocols, crossing_prefix=None, packet_types=None):
     """Check the received flood before native routing appends this bridge hop."""
     if not is_protocol_flood_candidate(packet, protocols, packet_types):
         return False
@@ -222,9 +216,7 @@ def is_protocol_direct(packet, local_prefix, protocols, packet_types=None):
     """Validate selected opaque transit before native next-hop consumption."""
     return (
         packet.header & PH_ROUTE_MASK == ROUTE_TYPE_DIRECT
-        and packet_type_enabled(
-            packet.get_payload_type(), "direct", protocols, packet_types
-        )
+        and packet_type_enabled(packet.get_payload_type(), "direct", protocols, packet_types)
         and _valid_frame(packet)
         and _valid_transit_payload(packet)
         and _is_next_hop(packet, local_prefix)
@@ -260,9 +252,7 @@ def append_trace_snr(packet, local_prefix, snr):
         return False
     if not isinstance(snr, (int, float)) or not math.isfinite(snr):
         return False
-    packet.path = bytearray(packet.path) + bytes(
-        [int(max(-32, min(31.75, snr)) * 4) & 0xFF]
-    )
+    packet.path = bytearray(packet.path) + bytes([int(max(-32, min(31.75, snr)) * 4) & 0xFF])
     packet.path_len += 1
     return True
 
@@ -285,9 +275,7 @@ def trace_record_fields(packet):
     return {
         "is_trace": True,
         "original_path": hops,
-        "path_hash": "["
-        + ", ".join(hops[:8] + (["..."] if len(hops) > 8 else []))
-        + "]",
+        "path_hash": "[" + ", ".join(hops[:8] + (["..."] if len(hops) > 8 else [])) + "]",
         "path_hash_size": width,
         "forwarded_path": None,
         "path_snr_details": details,

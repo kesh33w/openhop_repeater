@@ -251,11 +251,11 @@ def test_legacy_schema_migrates_and_defaults(tmp_path):
 
 def test_unknown_channel_signal_survives_restart_and_uses_signal_free_frame(tmp_path):
     handler = _handler(tmp_path)
-    message = {**_CHANNEL_TEXT, 'packet_hash': 'unknown-signal', 'snr': None, 'rssi': None}
+    message = {**_CHANNEL_TEXT, "packet_hash": "unknown-signal", "snr": None, "rssi": None}
     assert handler.companion_push_message(_HASH, message)
     restarted = _handler(tmp_path)
     loaded = restarted.companion_load_messages(_HASH)
-    assert loaded[0]['snr'] is None and loaded[0]['rssi'] is None
+    assert loaded[0]["snr"] is None and loaded[0]["rssi"] is None
     server = _frame_server(restarted)
     restored = server._sync_next_from_persistence()
     assert restored.snr is None and restored.rssi is None

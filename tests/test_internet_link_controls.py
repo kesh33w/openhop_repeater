@@ -1,4 +1,5 @@
 """Internet Link service control must not stay pending when the runtime hangs."""
+
 import asyncio
 import sys
 import types
@@ -54,13 +55,22 @@ async def test_limit_save_runs_off_loop_and_holds_enrollment_lock(private_link_s
         seen["locked"] = lock.locked()
         return {"success": True}
 
-    monkeypatch.setattr(internet_link, "candidate", lambda config, updates: ({"enabled": True}, "parsed", 8))
+    monkeypatch.setattr(
+        internet_link, "candidate", lambda config, updates: ({"enabled": True}, "parsed", 8)
+    )
     adapter = SimpleNamespace(config=None)
-    binding = SimpleNamespace(closed=False, paused=False, adapter=adapter, limit=1,
-                              service=SimpleNamespace(enrollment=SimpleNamespace(lock=lock)))
-    api = SimpleNamespace(config={"private_island": {"enabled": True}},
-                          config_manager=Mock(update_and_save=Mock(side_effect=save)),
-                          daemon_instance=SimpleNamespace(private_island=binding))
+    binding = SimpleNamespace(
+        closed=False,
+        paused=False,
+        adapter=adapter,
+        limit=1,
+        service=SimpleNamespace(enrollment=SimpleNamespace(lock=lock)),
+    )
+    api = SimpleNamespace(
+        config={"private_island": {"enabled": True}},
+        config_manager=Mock(update_and_save=Mock(side_effect=save)),
+        daemon_instance=SimpleNamespace(private_island=binding),
+    )
     assert await internet_link.update(api, {"max_inflight": 8})
     assert seen["thread"] != loop_thread and seen["locked"]
     assert adapter.config == "parsed" and binding.limit == 8

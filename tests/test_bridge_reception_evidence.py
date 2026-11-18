@@ -447,15 +447,25 @@ def test_diagnostics_report_antenna_identity_aliases():
     from repeater.tx_identities import TxIdentities
     from repeater.web.api_endpoints import APIEndpoints
 
-    ids = TxIdentities({"tx_identity_experiment": {"enabled": True}},
-                       bytes.fromhex("bd6e" + "11" * 30), radio_ids=["a", "b"])
+    ids = TxIdentities(
+        {"tx_identity_experiment": {"enabled": True}},
+        bytes.fromhex("bd6e" + "11" * 30),
+        radio_ids=["a", "b"],
+    )
     api = APIEndpoints.__new__(APIEndpoints)
     api.daemon_instance = SimpleNamespace(repeater_handler=SimpleNamespace(tx_identities=ids))
     api._set_cors_headers = Mock()
     data = api.bridge_diagnostics()["data"]["antenna_identities"]
     assert data["enabled"] is True and data["mode"] == "rx_tx"
     assert {(row["rx"], row["tx"]) for row in data["aliases"]} == {
-        ("a", "a"), ("a", "b"), ("b", "a"), ("b", "b")}
+        ("a", "a"),
+        ("a", "b"),
+        ("b", "a"),
+        ("b", "b"),
+    }
     api.daemon_instance = None
     assert api.bridge_diagnostics()["data"]["antenna_identities"] == {
-        "enabled": False, "mode": "rx_tx", "aliases": []}
+        "enabled": False,
+        "mode": "rx_tx",
+        "aliases": [],
+    }

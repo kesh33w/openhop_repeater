@@ -18,11 +18,17 @@ def config(tmp_path):
         "repeater": {"node_name": "test"},
         "radios": [{"radio_id": "a"}, {"id": None, "radio_id": "b"}],
         "channel_bridge": {
-            "enabled": True, "origin_home": "a", "channels": {"Public": "12" * 16},
-            "mappings": [], "echo_database": str(tmp_path / "echo.sqlite"),
+            "enabled": True,
+            "origin_home": "a",
+            "channels": {"Public": "12" * 16},
+            "mappings": [],
+            "echo_database": str(tmp_path / "echo.sqlite"),
         },
-        "identities": {"companions": [{"name": "Bot", "identity_key": "12" * 32,
-                                       "settings": {"home_radio_id": "b"}}]},
+        "identities": {
+            "companions": [
+                {"name": "Bot", "identity_key": "12" * 32, "settings": {"home_radio_id": "b"}}
+            ]
+        },
     }
 
 
@@ -41,7 +47,9 @@ def test_enabled_bridge_requires_companion_home(config, home):
     with pytest.raises(BridgeHomeAssignmentError, match="home_radio_id"):
         BridgeSettings.from_config(config)
     with pytest.raises(BridgeHomeAssignmentError):
-        RepeaterDaemon(config, radio=None)._configure_companion_routing(SimpleNamespace(), {"home_radio_id": home})
+        RepeaterDaemon(config, radio=None)._configure_companion_routing(
+            SimpleNamespace(), {"home_radio_id": home}
+        )
 
 
 def test_disabled_bridge_allows_unassigned_draft_and_companion(config):
@@ -95,14 +103,22 @@ def test_invalid_update_does_not_rename_or_mutate(config, monkeypatch, settings)
 
 
 def test_create_and_update_preserve_explicit_home(config, monkeypatch):
-    data = {"name": "NewBot", "type": "companion", "identity_key": "34" * 32,
-            "settings": {"home_radio_id": "b"}}
+    data = {
+        "name": "NewBot",
+        "type": "companion",
+        "identity_key": "34" * 32,
+        "settings": {"home_radio_id": "b"},
+    }
     api = api_for(config, monkeypatch, "POST", data)
     result = api.create_identity()
     assert result["success"], result
     assert config["identities"]["companions"][-1]["settings"]["home_radio_id"] == "b"
     monkeypatch.setattr(cherrypy.request, "method", "PUT")
-    monkeypatch.setattr(cherrypy.request, "json", {"name": "NewBot", "type": "companion", "settings": {"home_radio_id": "a"}})
+    monkeypatch.setattr(
+        cherrypy.request,
+        "json",
+        {"name": "NewBot", "type": "companion", "settings": {"home_radio_id": "a"}},
+    )
     assert api.update_identity()["success"]
     assert config["identities"]["companions"][-1]["settings"]["home_radio_id"] == "a"
 
@@ -121,8 +137,12 @@ def test_invalid_home_rejected_before_key_generation(config, monkeypatch):
 @pytest.mark.parametrize("raises", [False, True])
 def test_persistence_failure_restores_companion_config(config, monkeypatch, operation, raises):
     before = copy.deepcopy(config)
-    data = {"name": "New" if operation == "create" else "Bot", "type": "companion",
-            "identity_key": "34" * 32, "settings": {"home_radio_id": "a"}}
+    data = {
+        "name": "New" if operation == "create" else "Bot",
+        "type": "companion",
+        "identity_key": "34" * 32,
+        "settings": {"home_radio_id": "a"},
+    }
     if operation == "update":
         data["new_name"] = "Renamed"
     api = api_for(config, monkeypatch, "POST" if operation == "create" else "PUT", data)

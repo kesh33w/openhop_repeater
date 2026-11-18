@@ -197,40 +197,46 @@ def test_actual_outgoing_bytes_persist_and_old_schema_migrates(tmp_path):
             "SELECT raw_packet, failure_reason, success FROM packet_egress"
         ).fetchone() == ("010203", "unconfirmed", 0)
 
+
 @pytest.mark.asyncio
-async def test_confirmed_crossing_observer_is_not_local_repeat_and_cannot_change_tx_success(rig_factory):
+async def test_confirmed_crossing_observer_is_not_local_repeat_and_cannot_change_tx_success(
+    rig_factory,
+):
     rig = rig_factory()
-    observer = AsyncMock(side_effect=RuntimeError('local observer unavailable'))
+    observer = AsyncMock(side_effect=RuntimeError("local observer unavailable"))
     rig.handler.bridge_egress_callback = observer
-    assert await rig.handler(packet(), fabric_tests._rx('local'))
+    assert await rig.handler(packet(), fabric_tests._rx("local"))
     assert observer.await_count == 1
-    assert observer.call_args.args[2] == 'link'
-    assert rig.air.order == ['local', 'link']
+    assert observer.call_args.args[2] == "link"
+    assert rig.air.order == ["local", "link"]
+
 
 @pytest.mark.asyncio
 async def test_denied_crossing_has_no_destination_companion_observation(rig_factory):
-    rig=rig_factory(crossing_policy={'enabled':True,'default_action':'drop'})
-    rig.handler.bridge_egress_callback=AsyncMock()
-    assert await rig.handler(packet(),fabric_tests._rx('local'))
+    rig = rig_factory(crossing_policy={"enabled": True, "default_action": "drop"})
+    rig.handler.bridge_egress_callback = AsyncMock()
+    assert await rig.handler(packet(), fabric_tests._rx("local"))
     rig.handler.bridge_egress_callback.assert_not_called()
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize('route', [fabric_tests.ROUTE_TYPE_FLOOD, fabric_tests.ROUTE_TYPE_DIRECT])
+@pytest.mark.parametrize("route", [fabric_tests.ROUTE_TYPE_FLOOD, fabric_tests.ROUTE_TYPE_DIRECT])
 async def test_bridge_own_advert_uses_both_local_radios(rig_factory, route):
     rig = rig_factory()
     router = fabric_tests._router_for(rig)
-    advert = fabric_tests._packet(route, fabric_tests.PAYLOAD_TYPE_ADVERT, bytes(range(1, 33)), b'')
+    advert = fabric_tests._packet(route, fabric_tests.PAYLOAD_TYPE_ADVERT, bytes(range(1, 33)), b"")
     assert await router.inject_packet(advert, wait_for_ack=False)
-    assert rig.air.order == ['local', 'link']
+    assert rig.air.order == ["local", "link"]
     assert rig.air.frames[0][1] == rig.air.frames[1][1]
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize('home', ['local', 'link'])
+@pytest.mark.parametrize("home", ["local", "link"])
 async def test_companion_advert_retains_explicit_home(rig_factory, home):
     rig = rig_factory()
     router = fabric_tests._router_for(rig)
-    advert = fabric_tests._packet(fabric_tests.ROUTE_TYPE_FLOOD, fabric_tests.PAYLOAD_TYPE_ADVERT, bytes(range(1, 33)), b'')
+    advert = fabric_tests._packet(
+        fabric_tests.ROUTE_TYPE_FLOOD, fabric_tests.PAYLOAD_TYPE_ADVERT, bytes(range(1, 33)), b""
+    )
     assert await router.inject_packet(advert, wait_for_ack=False, home_radio_id=home)
     assert rig.air.order == [home]

@@ -4,6 +4,7 @@ Destination-specific admission preserves forwarding across unlike ears while
 local delivery remains once per network.
 No test opens hardware or transmits RF.
 """
+
 import copy
 import asyncio
 
@@ -48,9 +49,9 @@ def incoming(kind, channel, receiver):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("home,ear,other,channel", [
-    ("local", "omni909", "link", C1), ("link", "omni910", "local", C2)
-])
+@pytest.mark.parametrize(
+    "home,ear,other,channel", [("local", "omni909", "link", C1), ("link", "omni910", "local", C2)]
+)
 @pytest.mark.parametrize("kind", ["mapped", "unmapped", "native_direct"])
 @pytest.mark.parametrize("receiver_first", [True, False])
 @pytest.mark.parametrize("concurrent", [True, False])
@@ -66,10 +67,12 @@ async def test_dispatcher_router_preserves_directional_destinations_regardless_o
         router = f._router_for(rig)
         rig.dispatcher.register_handler(source.get_payload_type(), router._route_packet)
         order = (ear, home) if receiver_first else (home, ear)
+
         async def receive(rid):
             await rig.dispatcher._process_received_packet(
                 source.write_to(), -90, 8, rx_radio_id=rid
             )
+
         if concurrent:
             await asyncio.gather(*(receive(rid) for rid in order))
         else:
@@ -80,7 +83,9 @@ async def test_dispatcher_router_preserves_directional_destinations_regardless_o
         for _, raw in rig.air.frames:
             outgoing = f.Packet()
             outgoing.read_from(raw)
-            expected_path = bytes([0xCC]) if kind == "native_direct" else bytes([0x11, 0x22, f.LOCAL_HASH])
+            expected_path = (
+                bytes([0xCC]) if kind == "native_direct" else bytes([0x11, 0x22, f.LOCAL_HASH])
+            )
             assert bytes(outgoing.path) == expected_path
     finally:
         rig.close()
@@ -88,7 +93,9 @@ async def test_dispatcher_router_preserves_directional_destinations_regardless_o
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("clear_seen", [False, True])
-async def test_receiver_crossing_does_not_consume_later_native_repeat_in_engine(tmp_path, clear_seen):
+async def test_receiver_crossing_does_not_consume_later_native_repeat_in_engine(
+    tmp_path, clear_seen
+):
     rig = active_rig(tmp_path)
     try:
         receiver_packet = incoming("mapped", C1, "omni909")

@@ -764,9 +764,9 @@ class MeshCoreToMqttPusher:
 
         # Capture restart-required identity settings once. Never silently fall
         # back to the RF signer when a separate observer cannot be loaded.
-        self.separate_observer_identities = mqtt_brokers_config.get(
-            "separate_observer_identities", False
-        ) is not False
+        self.separate_observer_identities = (
+            mqtt_brokers_config.get("separate_observer_identities", False) is not False
+        )
         identities, self.identity_errors = {}, {}
         if self.separate_observer_identities:
             from .observer_identity import load_observer_identities
@@ -786,7 +786,11 @@ class MeshCoreToMqttPusher:
                 if not identity_error and observer is None:
                     identity_error = "a configured per-radio observer identity is required"
                 if observer is not None:
-                    identity, public_key, node_name = observer.identity, observer.public_key, observer.name
+                    identity, public_key, node_name = (
+                        observer.identity,
+                        observer.public_key,
+                        observer.name,
+                    )
                     canonical = f"meshcore/{broker.get('iata_code') or self.iata_code}/{public_key}"
                     if broker.get("base_topic") not in (None, canonical):
                         identity_error = "observer base_topic must match its region and public key"
@@ -1210,12 +1214,15 @@ class MeshCoreToMqttPusher:
         if getattr(conn, "observer_identity", False):
             payload = {**payload, "origin_id": conn.public_key, "origin": conn.node_name}
         if subtopic in ("packets", "packet", "raw"):
-            if payload.get("rx_radio_id") not in (members if logical is not None else (conn.radio_id,)):
+            if payload.get("rx_radio_id") not in (
+                members if logical is not None else (conn.radio_id,)
+            ):
                 return None
             return {**payload, "observer_radio_id": conn.radio_id}
         if subtopic == "status":
-            selected = next((r for r in payload.get("radios", [])
-                             if r.get("id") == conn.radio_id), None)
+            selected = next(
+                (r for r in payload.get("radios", []) if r.get("id") == conn.radio_id), None
+            )
             if selected is None:
                 return None
             projected = copy.deepcopy(payload)
@@ -1225,11 +1232,20 @@ class MeshCoreToMqttPusher:
             # Uptime belongs to the shared host. Traffic counters must belong
             # to this radio; omit unavailable values instead of using totals.
             projected["stats"] = {
-                key: value for key, value in payload.get("stats", {}).items()
+                key: value
+                for key, value in payload.get("stats", {}).items()
                 if key == "uptime_secs"
             }
-            for key in ("packets_received", "packets_sent", "errors", "tx_air_secs",
-                        "rx_air_secs", "current_airtime_ms", "utilization_percent", "noise_floor"):
+            for key in (
+                "packets_received",
+                "packets_sent",
+                "errors",
+                "tx_air_secs",
+                "rx_air_secs",
+                "current_airtime_ms",
+                "utilization_percent",
+                "noise_floor",
+            ):
                 if key in selected:
                     projected["stats"][key] = selected[key]
             if members:
@@ -1239,16 +1255,30 @@ class MeshCoreToMqttPusher:
                     observation = worker.snapshot()
                     projected["logical_observation"] = {
                         "unique_received": observation["unique_received"].get(conn.radio_id, 0),
-                        "shared_worker": {key: observation.get(key, 0) for key in (
-                            "queue_drops", "capacity_drops", "publish_errors", "shutdown_drops")},
+                        "shared_worker": {
+                            key: observation.get(key, 0)
+                            for key in (
+                                "queue_drops",
+                                "capacity_drops",
+                                "publish_errors",
+                                "shutdown_drops",
+                            )
+                        },
                     }
-                    projected["stats"]["packets_received"] = observation["unique_received"].get(conn.radio_id, 0)
+                    projected["stats"]["packets_received"] = observation["unique_received"].get(
+                        conn.radio_id, 0
+                    )
             if members and getattr(conn, "logical_observer_receive_only", False):
                 projected["repeat"] = "off"
                 projected["observer_mode"] = "receive_only"
                 # Fabric airtime is shared by logical network, not evidence of
                 # this physical shadow transmitting. Remove it at both levels.
-                for key in ("packets_sent", "tx_air_secs", "current_airtime_ms", "utilization_percent"):
+                for key in (
+                    "packets_sent",
+                    "tx_air_secs",
+                    "current_airtime_ms",
+                    "utilization_percent",
+                ):
                     projected["stats"].pop(key, None)
                     projected["radios"][0].pop(key, None)
             return projected
@@ -1291,7 +1321,9 @@ class MeshCoreToMqttPusher:
                     if selected_payload is None:
                         results.append((conn.broker["name"], "Skipped: different or unknown radio"))
                         continue
-                    selected_message = message if selected_payload is payload else json.dumps(selected_payload)
+                    selected_message = (
+                        message if selected_payload is payload else json.dumps(selected_payload)
+                    )
                     result = conn.publish(subtopic, selected_message, retain=retain, qos=qos)
                     results.append((conn.broker["name"], result))
                     _trace(f"Published to {conn.broker['name']} -- {subtopic}")
@@ -1342,7 +1374,9 @@ class MeshCoreToMqttPusher:
                 if selected_payload is None:
                     results.append((conn.broker["name"], "Skipped: unattributed neighbors"))
                     continue
-                selected_message = message if selected_payload is payload else json.dumps(selected_payload)
+                selected_message = (
+                    message if selected_payload is payload else json.dumps(selected_payload)
+                )
                 result = conn.publish("neighbors", selected_message, retain=False, qos=1)
                 # This is by far the largest payload the node emits and it is not
                 # size-capped, so an oversized or queue-full rejection is a real
@@ -1394,7 +1428,9 @@ class MeshCoreToMqttPusher:
                     if selected_payload is None:
                         results.append((conn.broker["name"], "Skipped: different or unknown radio"))
                         continue
-                    selected_message = message if selected_payload is payload else json.dumps(selected_payload)
+                    selected_message = (
+                        message if selected_payload is payload else json.dumps(selected_payload)
+                    )
                     result = conn.publish(subtopic, selected_message, retain=retain, qos=qos)
                     results.append((conn.broker["name"], result))
                     _trace(

@@ -161,9 +161,7 @@ def disconnected_modems(config: dict, radio) -> list[str]:
     radios = getattr(fabric, "radios", None)
     entries = config.get("radios")
     if isinstance(entries, list) and entries:
-        configured = [
-            (canonical_radio_id(e), e) for e in entries
-        ]
+        configured = [(canonical_radio_id(e), e) for e in entries]
         physicals = radios if isinstance(radios, dict) else {}
     else:
         configured = [("", config)]
@@ -272,7 +270,8 @@ def validate_observer_identity_config(config: dict) -> None:
         if not isinstance(radio_id, str) or radio_id not in known_radios:
             raise ValueError("observer_identities must refer to configured radio IDs")
         if not isinstance(identity, dict) or set(identity) not in (
-            {"name", "private_key_file"}, {"name", "use_repeater_identity"}
+            {"name", "private_key_file"},
+            {"name", "use_repeater_identity"},
         ):
             raise ValueError(
                 "Each observer identity requires name and exactly one of private_key_file "
@@ -291,7 +290,12 @@ def validate_observer_identity_config(config: dict) -> None:
                 raise ValueError("Only one radio may use the repeater identity")
             continue
         path = identity["private_key_file"]
-        if not isinstance(path, str) or not path.strip() or "\x00" in path or not Path(path).is_absolute():
+        if (
+            not isinstance(path, str)
+            or not path.strip()
+            or "\x00" in path
+            or not Path(path).is_absolute()
+        ):
             raise ValueError("Observer private_key_file must be an absolute path")
 
 
@@ -1222,6 +1226,7 @@ def validate_fabric_config(config: dict) -> tuple:
         )
 
     from repeater.network_topology import topology_from_config
+
     topology = topology_from_config(config)
     BridgeSettings.from_config(config)
     radio_count = len(radios_cfg) if has_radios else 1
@@ -1622,10 +1627,13 @@ def build_radio_stack(config: dict):
     # Validate every ID before opening hardware, including bridge-disabled stacks.
     configured_radio_ids(config)
     from repeater.network_topology import topology_from_config
+
     topology = topology_from_config(config)
     BridgeSettings.from_config(config)
     radio_count = len(radios_cfg) if isinstance(radios_cfg, list) and radios_cfg else 1
-    repeat_on_ingress, origin_tx = _validate_fabric_fanout(fabric_cfg, tx_mode, 2 if topology else radio_count)
+    repeat_on_ingress, origin_tx = _validate_fabric_fanout(
+        fabric_cfg, tx_mode, 2 if topology else radio_count
+    )
 
     meta = {
         "mode": "single",
@@ -1662,7 +1670,9 @@ def build_radio_stack(config: dict):
             except Exception:
                 if not topology or not topology.is_shadow(rid):
                     raise
-                logger.warning("Optional shadow receiver %s unavailable; continuing without it", rid)
+                logger.warning(
+                    "Optional shadow receiver %s unavailable; continuing without it", rid
+                )
                 continue
             pairs.append((physical, rid))
             profile = _radio_air_profile(merged, rid)

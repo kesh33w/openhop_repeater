@@ -16,18 +16,14 @@ def topology_from_config(config):
         return None
     ids = configured_radio_ids(config)
     default = (
-        fabric.get("default_radio")
-        or fabric.get("default_radio_id")
-        or (ids[0] if ids else None)
+        fabric.get("default_radio") or fabric.get("default_radio_id") or (ids[0] if ids else None)
     )
     topology = NetworkTopology(config.get("radios") or [], fabric["topology"], default)
     # Topology networks are separate meshes. Without an explicit tx_mode, keep
     # each repeat on its ingress network ("sticky", the core default) rather
     # than sending every network's traffic out of default_radio, which would
     # act as an unconfigured one-way bridge.
-    topology.tx_mode = (
-        str(fabric.get("tx_mode") or "sticky").strip().lower() or "sticky"
-    )
+    topology.tx_mode = str(fabric.get("tx_mode") or "sticky").strip().lower() or "sticky"
     if topology.tx_mode == "default":
         logger.warning(
             "fabric.tx_mode=default with fabric.topology repeats every network's "
@@ -53,9 +49,7 @@ def topology_from_config(config):
             )
         network = entry["network"]
         if network in settings and settings[network] != signature:
-            raise ValueError(
-                "Radios on one logical network must have matching air settings"
-            )
+            raise ValueError("Radios on one logical network must have matching air settings")
         settings[network] = signature
     if settings[next(iter(settings))][0] == settings[next(reversed(settings))][0]:
         raise ValueError("The two logical networks must have distinct frequencies")
@@ -64,6 +58,4 @@ def topology_from_config(config):
 
 def bridge_radio_ids(config):
     topology = topology_from_config(config)
-    return (
-        tuple(topology.networks.values()) if topology else configured_radio_ids(config)
-    )
+    return tuple(topology.networks.values()) if topology else configured_radio_ids(config)

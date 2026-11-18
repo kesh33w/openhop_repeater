@@ -312,7 +312,10 @@ class StorageCollector:
                 if not isinstance(radio, (TCPLoRaRadio, USBLoRaRadio)):
                     continue
                 status = radio.get_status()
-                for source, target in (("rx_count", "packets_received"), ("tx_count", "packets_sent")):
+                for source, target in (
+                    ("rx_count", "packets_received"),
+                    ("tx_count", "packets_sent"),
+                ):
                     value = status.get(source)
                     if isinstance(value, int) and not isinstance(value, bool) and value >= 0:
                         entry(radio_id)[target] = value

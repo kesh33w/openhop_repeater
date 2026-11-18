@@ -348,6 +348,7 @@ def test_stopped_worker_emits_terminal_event(api, loop):
     api.cad_calibration.stop_calibration()
     # Worker exit can precede coroutine cancellation cleanup; busy must cover both.
     import time
+
     deadline = time.monotonic() + 2
     while api.cad_calibration.busy and time.monotonic() < deadline:
         time.sleep(0.001)
@@ -405,6 +406,7 @@ def test_cad_toggle_is_per_radio_and_persistent(api, loop):
         api.bay.lbt_enabled = enabled
         api.bay._cad_mode_explicit = enabled
         return True
+
     api.bay.set_cad_enabled = setter
     body(radio_id="bay", enabled=False)
     result = api.set_cad_enabled()
@@ -420,6 +422,7 @@ def test_cad_toggle_is_per_radio_and_persistent(api, loop):
 def test_cad_toggle_failure_does_not_persist(api, loop):
     async def setter(enabled):
         raise RuntimeError("no firmware acknowledgement")
+
     api.bay.set_cad_enabled = setter
     before = copy.deepcopy(api.config)
     body(radio_id="bay", enabled=False)

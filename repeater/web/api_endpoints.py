@@ -73,7 +73,8 @@ def _redact_mqtt_broker_passwords(mqtt_brokers):
         identities = identities if isinstance(identities, dict) else {}
         redacted["observer_identities"] = {
             radio_id: {
-                key: value for key, value in identity.items()
+                key: value
+                for key, value in identity.items()
                 if (key in ("name", "private_key_file") and isinstance(value, str))
                 or (key == "use_repeater_identity" and isinstance(value, bool))
             }
@@ -2713,6 +2714,7 @@ class APIEndpoints:
     @cherrypy.tools.json_out()
     def internet_link(self):
         from .internet_link import inspect
+
         self._set_cors_headers()
         if cherrypy.request.method != "GET":
             raise cherrypy.HTTPError(405)
@@ -2730,6 +2732,7 @@ class APIEndpoints:
     @cherrypy.tools.json_in()
     def update_internet_link(self):
         from .internet_link import update
+
         self._set_cors_headers()
         if cherrypy.request.method == "OPTIONS":
             return ""
@@ -2737,18 +2740,30 @@ class APIEndpoints:
         if self.event_loop is None or not self.event_loop.is_running():
             return self._error("Internet Link is unavailable. No settings were changed.")
         from .internet_link import HTTP_WAIT_SECONDS
+
         try:
-            future = asyncio.run_coroutine_threadsafe(update(self, cherrypy.request.json), self.event_loop)
+            future = asyncio.run_coroutine_threadsafe(
+                update(self, cherrypy.request.json), self.event_loop
+            )
             result = future.result(timeout=HTTP_WAIT_SECONDS)
             if not result:
-                return self._error("Internet Link options could not be saved. No settings were changed.")
-            return self._success(result if isinstance(result, dict) else
-                                 {"saved": True, "live_updated": True, "restart_required": False})
+                return self._error(
+                    "Internet Link options could not be saved. No settings were changed."
+                )
+            return self._success(
+                result
+                if isinstance(result, dict)
+                else {"saved": True, "live_updated": True, "restart_required": False}
+            )
         except (ValueError, TypeError, KeyError):
-            return self._error("Invalid Internet Link options. Check the service setting and traffic limits.")
+            return self._error(
+                "Invalid Internet Link options. Check the service setting and traffic limits."
+            )
         except FutureTimeoutError:
             # The change keeps running on the loop and is itself bounded.
-            result = self._error("Internet Link change outcome is unknown. It may still complete; refresh status before taking further action.")
+            result = self._error(
+                "Internet Link change outcome is unknown. It may still complete; refresh status before taking further action."
+            )
             result["outcome"] = "unknown"
             return result
         except Exception:
@@ -2766,15 +2781,17 @@ class APIEndpoints:
         evidence = getattr(handler, "bridge_evidence", None)
         traffic = getattr(handler, "bridge_traffic", None)
         identities = getattr(handler, "tx_identities", None)
-        return self._success({
-            "reception": (evidence or ReceptionEvidence()).status(),
-            "traffic": (traffic or DirectionalTrafficGuard()).status(),
-            "antenna_identities": {
-                "enabled": bool(identities and identities.enabled),
-                "mode": getattr(identities, "mode", "rx_tx"),
-                "aliases": identities.table() if identities else [],
-            },
-        })
+        return self._success(
+            {
+                "reception": (evidence or ReceptionEvidence()).status(),
+                "traffic": (traffic or DirectionalTrafficGuard()).status(),
+                "antenna_identities": {
+                    "enabled": bool(identities and identities.enabled),
+                    "mode": getattr(identities, "mode", "rx_tx"),
+                    "aliases": identities.table() if identities else [],
+                },
+            }
+        )
 
     @cherrypy.expose
     @cherrypy.tools.json_out()
@@ -2785,9 +2802,11 @@ class APIEndpoints:
             raise cherrypy.HTTPError(405)
         from .tx_group_settings import tx_group_view
         from .bridge_controls import saved_snapshot
+
         handler = getattr(self.daemon_instance, "repeater_handler", None)
-        return self._success(tx_group_view(saved_snapshot(self),
-                             getattr(handler, "network_topology", None)))
+        return self._success(
+            tx_group_view(saved_snapshot(self), getattr(handler, "network_topology", None))
+        )
 
     @cherrypy.expose
     @cherrypy.tools.json_out()
@@ -2798,6 +2817,7 @@ class APIEndpoints:
         from repeater.config_manager import _CONFIG_WRITE_LOCK
         from .tx_group_settings import tx_group_candidate
         from .bridge_controls import saved_snapshot
+
         with _CONFIG_WRITE_LOCK:
             try:
                 radios, _ = physical_radios(self.daemon_instance)
@@ -2807,8 +2827,13 @@ class APIEndpoints:
                 return self._error(str(exc))
         if not result.get("success"):
             return self._error("TX group could not be saved; running transmitters are unchanged")
-        return self._success({"saved": True, "restart_required": True,
-                              "message": "Saved for restart. Running transmitters are unchanged."})
+        return self._success(
+            {
+                "saved": True,
+                "restart_required": True,
+                "message": "Saved for restart. Running transmitters are unchanged.",
+            }
+        )
 
     @cherrypy.expose
     @cherrypy.tools.json_out()
@@ -2820,10 +2845,17 @@ class APIEndpoints:
         if cherrypy.request.method != "GET":
             raise cherrypy.HTTPError(405)
         from .bridge_controls import inspect, saved_snapshot
+
         if self.event_loop is None or not self.event_loop.is_running():
             result = bridge_view(saved_snapshot(self), self._config_path)
-            result.update({"controls_available": False, "running": None,
-                           "active_settings": None, "restart_required": None})
+            result.update(
+                {
+                    "controls_available": False,
+                    "running": None,
+                    "active_settings": None,
+                    "restart_required": None,
+                }
+            )
             return self._success(result)
         try:
             future = asyncio.run_coroutine_threadsafe(inspect(self), self.event_loop)
@@ -2837,6 +2869,7 @@ class APIEndpoints:
     def update_bridge_controls(self):
         """Persist and apply the crossing pause without changing running routes."""
         from .bridge_controls import update
+
         self._set_cors_headers()
         if cherrypy.request.method == "OPTIONS":
             return ""
@@ -2844,14 +2877,18 @@ class APIEndpoints:
         if self.event_loop is None or not self.event_loop.is_running():
             return self._error("Bridge controls are unavailable. No settings were changed.")
         try:
-            future = asyncio.run_coroutine_threadsafe(update(self, cherrypy.request.json), self.event_loop)
+            future = asyncio.run_coroutine_threadsafe(
+                update(self, cherrypy.request.json), self.event_loop
+            )
             if not future.result(timeout=5):
                 return self._error("Bridge pause could not be saved. No settings were changed.")
             return self._success({"saved": True, "live_updated": True})
         except (ValueError, TypeError, KeyError):
             return self._error("Bridge pause is unavailable, already pending or invalid")
         except Exception:  # noqa: BLE001 - outcome may be uncertain; do not echo config
-            result = self._error("Bridge pause outcome is unknown. It may still complete; refresh status before taking further action.")
+            result = self._error(
+                "Bridge pause outcome is unknown. It may still complete; refresh status before taking further action."
+            )
             result["outcome"] = "unknown"
             return result
 
@@ -2864,6 +2901,7 @@ class APIEndpoints:
             return ""
         self._require_post()
         from repeater.config_manager import _CONFIG_WRITE_LOCK
+
         with _CONFIG_WRITE_LOCK:
             try:
                 section = bridge_candidate(self.config, cherrypy.request.json, self._config_path)
@@ -2873,7 +2911,9 @@ class APIEndpoints:
             except BridgeHomeAssignmentError:
                 return self._error("bridge_home_assignment_required")
             except (ValueError, TypeError, KeyError):
-                return self._error("Invalid bridge settings. Check radios, channels, mappings and limits.")
+                return self._error(
+                    "Invalid bridge settings. Check radios, channels, mappings and limits."
+                )
             result = self.config_manager.update_and_save(
                 {"channel_bridge": section}, live_update=False
             )
@@ -2997,9 +3037,14 @@ class APIEndpoints:
             return self._success(
                 {
                     "handler_active": handler is not None,
-                    "logical_observation": (handler.logical_observer.snapshot()
-                        if getattr(handler, "logical_observer", None) is not None else None),
-                    "separate_observer_identities": getattr(handler, "separate_observer_identities", False),
+                    "logical_observation": (
+                        handler.logical_observer.snapshot()
+                        if getattr(handler, "logical_observer", None) is not None
+                        else None
+                    ),
+                    "separate_observer_identities": getattr(
+                        handler, "separate_observer_identities", False
+                    ),
                     "brokers": connected_brokers,
                     "neighbors": neighbors_status,
                 }
@@ -4944,8 +4989,9 @@ class APIEndpoints:
             if not callable(setter):
                 return self._error("This radio does not support acknowledged CAD control")
             entries = self.config.get("radios", []) or []
-            target = next((entry for entry in entries
-                           if canonical_radio_id(entry) == radio_id), None)
+            target = next(
+                (entry for entry in entries if canonical_radio_id(entry) == radio_id), None
+            )
             if entries and target is None:
                 return self._error("No configuration entry for this radio")
             future = asyncio.run_coroutine_threadsafe(setter(enabled), self.event_loop)
@@ -4958,18 +5004,29 @@ class APIEndpoints:
             effective_cad["enabled"] = enabled
 
             def apply(config):
-                entry = next((e for e in config.get("radios", []) or []
-                              if canonical_radio_id(e) == radio_id), None)
-                section = (entry.setdefault("radio", {}) if entry is not None
-                           else config.setdefault("radio", {}))
+                entry = next(
+                    (
+                        e
+                        for e in config.get("radios", []) or []
+                        if canonical_radio_id(e) == radio_id
+                    ),
+                    None,
+                )
+                section = (
+                    entry.setdefault("radio", {})
+                    if entry is not None
+                    else config.setdefault("radio", {})
+                )
                 section["cad"] = copy.deepcopy(effective_cad)
 
             if not self.config_manager.apply_and_save(apply):
                 return self._error("CAD mode changed in memory but could not be saved for restart")
-            return self._success({
-                "message": "CAD before transmit " + ("enabled" if enabled else "disabled"),
-                "settings": {"radio_id": radio_id, "enabled": enabled},
-            })
+            return self._success(
+                {
+                    "message": "CAD before transmit " + ("enabled" if enabled else "disabled"),
+                    "settings": {"radio_id": radio_id, "enabled": enabled},
+                }
+            )
         except cherrypy.HTTPError:
             raise
         except Exception as exc:
@@ -7374,7 +7431,8 @@ class APIEndpoints:
 
                 try:
                     validate_companion_home(
-                        self.config, identity.get("settings") or {},
+                        self.config,
+                        identity.get("settings") or {},
                         context=f"Companion '{resolved_name}'",
                     )
                 except ValueError as e:

@@ -5,7 +5,6 @@ import copy
 from unittest.mock import AsyncMock
 
 import pytest
-from tests.test_channel_bridge_engine import rig_factory  # noqa: F401
 from tests.test_channel_bridge import packet
 from tests.test_fabric_fanout import _rx
 

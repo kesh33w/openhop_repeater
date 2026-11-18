@@ -7,8 +7,8 @@ from openhop_core.rf_fabric.fabric import RFFabric
 from openhop_core.node.dispatcher import Dispatcher
 from tests.test_logical_receiver import topology
 from tests.test_channel_bridge import packet
+from tests.test_fabric_fanout import _rx
 from tests.test_tx_lock import _make_handler
-from tests.test_channel_bridge_engine import rig_factory
 from repeater.channel_bridge import AsyncEchoLedger, EchoLedger
 
 
@@ -24,8 +24,6 @@ class InlineLedger(AsyncEchoLedger):
     def close(self):
         self._ledger.close()
 
-
-from tests.test_fabric_fanout import _rx
 
 SUPPRESSED = dict(
     ok=False,
@@ -106,9 +104,7 @@ async def test_scheduler_never_retries_or_charges_suppression(sent):
 
 
 @pytest.mark.asyncio
-async def test_suppression_persists_reason_and_keeps_durable_reservation(
-    rig_factory, monkeypatch
-):
+async def test_suppression_persists_reason_and_keeps_durable_reservation(rig_factory, monkeypatch):
     monkeypatch.setattr("repeater.engine.AsyncEchoLedger", InlineLedger)
     rig = rig_factory()
     rig.dispatcher._client_repeat_enabled = False
@@ -147,9 +143,7 @@ def test_sql_lbt_excludes_suppression_but_retains_busy_and_unknown_failures():
     db.execute(
         "CREATE TABLE packet_egress(timestamp,radio_id,success,lbt_attempts,lbt_channel_busy,failure_reason)"
     )
-    db.execute(
-        "CREATE INDEX idx_packet_egress_time_radio ON packet_egress(timestamp,radio_id)"
-    )
+    db.execute("CREATE INDEX idx_packet_egress_time_radio ON packet_egress(timestamp,radio_id)")
     db.executemany(
         "INSERT INTO packet_egress VALUES(?,?,?,?,?,?)",
         [
@@ -178,9 +172,7 @@ async def test_receiver_destination_claim_survives_suppression(tmp_path, monkeyp
     rig.ears["link"].send = AsyncMock(return_value=dict(SUPPRESSED))
     try:
         await asyncio.wait_for(rig.handler(packet(), _rx("omni909")), 5)
-        assert any(
-            network == "910" for network, digest in rig.handler._forward_destinations
-        )
+        assert any(network == "910" for network, digest in rig.handler._forward_destinations)
         rows = rig.handler.storage.record_packet.call_args.kwargs["tx_egress"]
         assert rows[0]["failure_reason"] == "destination duplicate"
         assert (
@@ -241,9 +233,7 @@ async def test_expired_attempt_gets_reason_without_dispatch():
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("suppressed", [True, False])
-async def test_injection_suppression_logs_info_without_success_or_loopback(
-    caplog, suppressed
-):
+async def test_injection_suppression_logs_info_without_success_or_loopback(caplog, suppressed):
     import logging
     from types import SimpleNamespace
     from tests.test_fabric_fanout import _router_for
@@ -263,9 +253,7 @@ async def test_injection_suppression_logs_info_without_success_or_loopback(
     with caplog.at_level(logging.INFO):
         assert await router.inject_packet(packet()) is False
     router.enqueue.assert_not_called()
-    messages = [
-        record for record in caplog.records if "Injected packet" in record.message
-    ]
+    messages = [record for record in caplog.records if "Injected packet" in record.message]
     assert len(messages) == 1
     assert messages[0].levelno == (logging.INFO if suppressed else logging.WARNING)
     if suppressed:

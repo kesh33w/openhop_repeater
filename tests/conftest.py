@@ -21,6 +21,10 @@ import threading
 
 import pytest
 
+# Shared bridge rig fixture, defined beside the bridge engine tests. Registering
+# it here lets other modules use it without importing a test module.
+from tests.test_channel_bridge_engine import rig_factory  # noqa: F401
+
 _WATCHDOG_NAME = "shutdown-watchdog"
 
 

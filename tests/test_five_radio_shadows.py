@@ -1,4 +1,5 @@
 """Two transmitters and three shadow ears need no four-radio special case."""
+
 import asyncio
 import copy
 from unittest.mock import AsyncMock

@@ -1,4 +1,5 @@
 """Observer configuration validation never opens key files."""
+
 import copy
 from types import SimpleNamespace
 from unittest.mock import MagicMock
@@ -16,7 +17,9 @@ def settings():
         "radios": [{"id": "left"}, {"id": "right"}],
         "mqtt_brokers": {
             "separate_observer_identities": True,
-            "observer_identities": {"left": {"name": "Left observer", "private_key_file": "/keys/left.key"}},
+            "observer_identities": {
+                "left": {"name": "Left observer", "private_key_file": "/keys/left.key"}
+            },
             "brokers": [],
         },
     }
@@ -48,12 +51,20 @@ def test_mode_requires_real_boolean(value):
         validate_observer_identity_config(cfg)
 
 
-@pytest.mark.parametrize("identity", [None, [], {}, {"name": "Left", "private_key": "secret"},
-    {"name": "Left", "private_key_file": "relative.key"},
-    {"name": "", "private_key_file": "/keys/key"},
-    {"name": "Left\nobserver", "private_key_file": "/keys/key"},
-    {"name": "Left", "private_key_file": "/keys/key\0"},
-    {"name": "Left", "private_key_file": "/keys/key", "identity_key": "secret"}])
+@pytest.mark.parametrize(
+    "identity",
+    [
+        None,
+        [],
+        {},
+        {"name": "Left", "private_key": "secret"},
+        {"name": "Left", "private_key_file": "relative.key"},
+        {"name": "", "private_key_file": "/keys/key"},
+        {"name": "Left\nobserver", "private_key_file": "/keys/key"},
+        {"name": "Left", "private_key_file": "/keys/key\0"},
+        {"name": "Left", "private_key_file": "/keys/key", "identity_key": "secret"},
+    ],
+)
 def test_reject_invalid_identity(identity):
     cfg = settings()
     cfg["mqtt_brokers"]["observer_identities"]["left"] = identity
@@ -63,7 +74,9 @@ def test_reject_invalid_identity(identity):
 
 def test_reject_unknown_radio():
     cfg = settings()
-    cfg["mqtt_brokers"]["observer_identities"]["unknown"] = cfg["mqtt_brokers"]["observer_identities"].pop("left")
+    cfg["mqtt_brokers"]["observer_identities"]["unknown"] = cfg["mqtt_brokers"][
+        "observer_identities"
+    ].pop("left")
     with pytest.raises(ValueError, match="configured radio"):
         validate_observer_identity_config(cfg)
 
@@ -77,7 +90,10 @@ def test_older_ui_save_preserves_mode_and_map(monkeypatch):
     assert call["live_update"] is False
     candidate = copy.deepcopy(cfg)
     ConfigManager._apply_updates(candidate, call["updates"])
-    assert candidate["mqtt_brokers"]["observer_identities"] == cfg["mqtt_brokers"]["observer_identities"]
+    assert (
+        candidate["mqtt_brokers"]["observer_identities"]
+        == cfg["mqtt_brokers"]["observer_identities"]
+    )
     assert candidate["mqtt_brokers"]["separate_observer_identities"] is True
 
 
@@ -87,7 +103,10 @@ def test_api_can_save_mode_and_references_without_loading_keys(monkeypatch):
     monkeypatch.setattr("builtins.open", lambda *a, **k: pytest.fail("must not read key files"))
     result = api.update_mqtt_config()
     assert result["success"] and result["data"]["restart_required"]
-    assert api.config_manager.update_and_save.call_args.kwargs["updates"]["mqtt_brokers"] == request.json
+    assert (
+        api.config_manager.update_and_save.call_args.kwargs["updates"]["mqtt_brokers"]
+        == request.json
+    )
 
 
 def test_api_rejects_inline_key_without_saving(monkeypatch):
@@ -109,11 +128,19 @@ def test_config_redaction_strips_inline_key_material():
 
 def test_status_exposes_only_connection_public_identity(monkeypatch):
     api, _ = api_fixture(monkeypatch, settings())
-    conn = SimpleNamespace(enabled=False, broker={"name": "feed", "host": "broker"},
-        is_connected=lambda: False, has_pending_reconnect=lambda: False,
-        format="letsmesh", radio_id="left", observer_identity=True,
-        node_name="Left", public_key="AB" * 32, identity_error="Key unavailable",
-        local_identity=SimpleNamespace(private_key="secret"))
+    conn = SimpleNamespace(
+        enabled=False,
+        broker={"name": "feed", "host": "broker"},
+        is_connected=lambda: False,
+        has_pending_reconnect=lambda: False,
+        format="letsmesh",
+        radio_id="left",
+        observer_identity=True,
+        node_name="Left",
+        public_key="AB" * 32,
+        identity_error="Key unavailable",
+        local_identity=SimpleNamespace(private_key="secret"),
+    )
     handler = SimpleNamespace(connections=[conn], separate_observer_identities=True)
     api._get_storage = lambda: SimpleNamespace(mqtt_handler=handler)
     result = api.mqtt_status()
@@ -127,25 +154,35 @@ def test_status_exposes_only_connection_public_identity(monkeypatch):
 def test_one_explicit_repeater_identity_is_valid_and_serializes():
     cfg = settings()
     cfg["mqtt_brokers"]["observer_identities"]["right"] = {
-        "name": "Existing observer", "use_repeater_identity": True}
+        "name": "Existing observer",
+        "use_repeater_identity": True,
+    }
     validate_observer_identity_config(cfg)
     assert _redact_mqtt_broker_passwords(cfg["mqtt_brokers"])["observer_identities"]["right"] == {
-        "name": "Existing observer", "use_repeater_identity": True}
+        "name": "Existing observer",
+        "use_repeater_identity": True,
+    }
 
 
 def test_two_radios_cannot_use_repeater_identity():
     cfg = settings()
     cfg["mqtt_brokers"]["observer_identities"] = {
-        radio: {"name": radio, "use_repeater_identity": True} for radio in ("left", "right")}
+        radio: {"name": radio, "use_repeater_identity": True} for radio in ("left", "right")
+    }
     with pytest.raises(ValueError, match="Only one"):
         validate_observer_identity_config(cfg)
 
 
-@pytest.mark.parametrize("choice", [
-    {"use_repeater_identity": True, "private_key_file": "/keys/left.key"},
-    {"use_repeater_identity": False}, {"use_repeater_identity": "true"},
-    {"use_repeater_identity": 1}, {},
-])
+@pytest.mark.parametrize(
+    "choice",
+    [
+        {"use_repeater_identity": True, "private_key_file": "/keys/left.key"},
+        {"use_repeater_identity": False},
+        {"use_repeater_identity": "true"},
+        {"use_repeater_identity": 1},
+        {},
+    ],
+)
 def test_identity_choice_must_be_explicit_and_unambiguous(choice):
     cfg = settings()
     cfg["mqtt_brokers"]["observer_identities"]["left"] = {"name": "Left", **choice}
@@ -155,15 +192,21 @@ def test_identity_choice_must_be_explicit_and_unambiguous(choice):
 
 def test_malformed_identity_map_cannot_leak_inline_text():
     assert _redact_mqtt_broker_passwords({"observer_identities": "secret"}) == {
-        "observer_identities": {}}
+        "observer_identities": {}
+    }
 
 
 def test_import_rejects_inline_key_before_mutating_config(monkeypatch):
     cfg = settings()
     api, request = api_fixture(monkeypatch, cfg)
     original = copy.deepcopy(cfg)
-    request.json = {"config": {"mqtt_brokers": {
-        "observer_identities": {"left": {"name": "Left", "private_key": "secret"}}}}}
+    request.json = {
+        "config": {
+            "mqtt_brokers": {
+                "observer_identities": {"left": {"name": "Left", "private_key": "secret"}}
+            }
+        }
+    }
     result = api._config_import_locked()
     assert not result["success"]
     assert "secret" not in str(result)

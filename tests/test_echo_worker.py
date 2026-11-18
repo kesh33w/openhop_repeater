@@ -108,7 +108,10 @@ async def test_failed_commit_is_reported_without_claiming_sent(tmp_path):
         )
         with pytest.raises(sqlite3.DatabaseError):
             await worker.finish(token, success=True)
-        await worker._test_operation(lambda ledger: ledger.db.set_authorizer(None))
+        # set_authorizer(None) needs Python 3.11; allow-all works everywhere.
+        await worker._test_operation(
+            lambda ledger: ledger.db.set_authorizer(lambda *args: sqlite3.SQLITE_OK)
+        )
         assert await worker.contains(packet())
         assert await worker._test_operation(
             lambda ledger: ledger.db.execute("SELECT DISTINCT state FROM echoes").fetchall()

@@ -2502,15 +2502,18 @@ class RepeaterHandler(BaseHandler):
                             # Choose legacy compatibility before calling, never by
                             # catching a TypeError after a possible on-air write.
                             try:
-                                inspect.signature(self.dispatcher.send_packet).bind(
-                                    fwd_pkt, **kwargs
-                                )
-                            except TypeError:
-                                if deadline is not None:
-                                    raise
-                                kwargs.pop("radio_id")
-                            except (ValueError, AttributeError):
-                                pass  # Unknown signature: try the explicit named call once.
+                                signature = inspect.signature(self.dispatcher.send_packet)
+                            except (TypeError, ValueError, AttributeError):
+                                # Unknown signature (some callables, and mocks on
+                                # Python 3.10, cannot report one): try the named call.
+                                signature = None
+                            if signature is not None:
+                                try:
+                                    signature.bind(fwd_pkt, **kwargs)
+                                except TypeError:
+                                    if deadline is not None:
+                                        raise
+                                    kwargs.pop("radio_id")
                         if before_dispatch is not None:
                             before_dispatch(fwd_pkt)
                         sent = await self.dispatcher.send_packet(fwd_pkt, **kwargs)

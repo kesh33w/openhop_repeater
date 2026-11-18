@@ -1,4 +1,5 @@
 import asyncio
+import concurrent.futures
 import logging
 import threading
 import time
@@ -68,7 +69,9 @@ class CADCalibrationEngine:
     def _wait_cad_result(self, future, timeout):
         try:
             return future.result(timeout=timeout)
-        except TimeoutError:
+        # Distinct classes before Python 3.11; catch both so a timed-out sample is
+        # always cancelled and calibration never stays marked as running.
+        except (TimeoutError, concurrent.futures.TimeoutError):
             self.running = False
             future.cancel()
             self.broadcast_to_clients({"type": "error", "message": "CAD sample timed out"})

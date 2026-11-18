@@ -341,8 +341,8 @@ class ReceiptSession:
         self.writer.close()
         try:
             await self.writer.wait_closed()
-        except Exception:
-            pass
+        except (OSError, ConnectionError):
+            pass  # The peer already dropped the connection; nothing left to close.
 
 
 class RawReceiptServer:

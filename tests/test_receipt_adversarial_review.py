@@ -47,9 +47,11 @@ def feed(reader, **event):
 
 
 async def until(predicate):
-    async with asyncio.timeout(1):
+    async def poll():
         while not predicate():
             await asyncio.sleep(0.001)
+
+    await asyncio.wait_for(poll(), 1)  # asyncio.timeout() needs Python 3.11
 
 
 @pytest_asyncio.fixture

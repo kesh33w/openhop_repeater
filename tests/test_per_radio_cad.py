@@ -1,3 +1,4 @@
+import concurrent.futures
 import asyncio
 import copy
 import json
@@ -318,7 +319,7 @@ def test_timeout_cancels_pending_sample_and_keeps_busy_until_cleanup(api, loop):
     assert entered.wait(2)
     engine.running = True
     try:
-        with pytest.raises(TimeoutError):
+        with pytest.raises((TimeoutError, concurrent.futures.TimeoutError)):
             engine._wait_cad_result(future, timeout=0.01)
         assert cleanup_started.wait(2)
         assert engine.busy

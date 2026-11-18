@@ -4,19 +4,45 @@ Payloads remain unchanged. Aliases resolve to native/crossing routes on receipt;
 TRACE and originated zero-hop packets are deliberately not tagged.
 """
 import copy
+import logging
+
 from repeater.bridge_protocols import crossing_route_identity
 from openhop_core.protocol.constants import PAYLOAD_TYPE_TRACE
 
+logger = logging.getLogger("TxIdentities")
+
+
 class TxIdentities:
-    def __init__(self, config, native, crossing=None):
-        cfg = config.get('tx_identity_experiment', {})
-        self.enabled = cfg.get('enabled', False) is True
+    def __init__(self, config, native, crossing=None, radio_ids=None):
         self.native = bytes(native)
         self.crossing = bytes(crossing) if crossing is not None else self.native
+        self.enabled = False
         self.radios = {}
         self.aliases = {}
+        try:
+            self._load(config.get('tx_identity_experiment') or {}, radio_ids)
+        except Exception as exc:  # noqa: BLE001 - a diagnostic must never stop the repeater
+            # Fail safe: no tags and no alias recognition, but RF keeps running.
+            self.enabled = False
+            self.radios.clear()
+            self.aliases.clear()
+            logger.error("TX identity experiment disabled: invalid configuration (%s)", exc)
+
+    def _load(self, cfg, radio_ids):
+        if not isinstance(cfg, dict):
+            raise ValueError('tx_identity_experiment must be a mapping')
+        enabled = cfg.get('enabled', False)
+        if type(enabled) is not bool:
+            raise ValueError('enabled must be true or false')
+        radios = cfg.get('radios', {})
+        if not isinstance(radios, dict):
+            raise ValueError('radios must map radio ids to public keys')
+        known = set(radio_ids) if radio_ids else None
         used = {self.native[0], self.crossing[0]}
-        for rid, public in cfg.get('radios', {}).items():
+        for rid, public in radios.items():
+            if known is not None and rid not in known:
+                logger.warning("TX identity for unknown radio %r ignored", rid)
+                continue
             key = bytes.fromhex(public)
             if len(key) != 32:
                 raise ValueError('TX identity must be a 32-byte public key')
@@ -28,6 +54,7 @@ class TxIdentities:
             self.radios[rid] = (key, cross)
             self.aliases[key] = self.native
             self.aliases[cross] = self.crossing
+        self.enabled = enabled
 
     def prefixes(self, width, crossing_only=False):
         return {key[:width] for key, canonical in self.aliases.items()

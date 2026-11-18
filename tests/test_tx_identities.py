@@ -71,3 +71,26 @@ async def test_real_sequential_scheduler_tags_both_legs():
     assert bytes(frames[0].payload)==bytes(frames[1].payload)
     assert r.air.order==['link','rak'] and not r.air.overlapped
     assert p.write_to()==before
+
+
+@pytest.mark.parametrize('section', [
+    {'enabled': True, 'radios': {'rak': 'zz'}},
+    {'enabled': True, 'radios': {'rak': '00' * 31}},
+    {'enabled': 'yes', 'radios': {}},
+    {'enabled': True, 'radios': ['rak']},
+    'on',
+])
+def test_invalid_config_disables_experiment_without_raising(section, caplog):
+    ids = TxIdentities({'tx_identity_experiment': section}, bytes.fromhex('bd6e' + '11' * 30))
+    assert not ids.enabled and not ids.aliases
+    assert 'TX identity experiment disabled' in caplog.text
+
+
+def test_unknown_radio_is_warned_and_skipped(caplog):
+    good = identities()
+    keys = {rid: key.hex() for rid, (key, _) in good.radios.items()}
+    keys['typo'] = keys.pop('rak')
+    ids = TxIdentities({'tx_identity_experiment': {'enabled': True, 'radios': keys}},
+                       good.native, good.crossing, radio_ids=['directional', 'rak'])
+    assert ids.enabled and set(ids.radios) == {'directional'}
+    assert "unknown radio 'typo'" in caplog.text

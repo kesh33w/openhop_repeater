@@ -215,6 +215,7 @@ class RepeaterHandler(BaseHandler):
         self.tx_identities = TxIdentities(
             config, self.local_hash_bytes,
             self.channel_bridge.crossing_identity if self.channel_bridge else None,
+            radio_ids=configured_radio_ids(config),
         )
         self.bridge_evidence = ReceptionEvidence(
             self.channel_bridge.evidence_settings if self.channel_bridge else None

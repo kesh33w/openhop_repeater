@@ -282,6 +282,27 @@ class ConfigManager:
                 logger.exception("Failed to save config to %s", self.config_path)
                 return False
 
+    def apply_and_save(self, mutate) -> bool:
+        """Persist ``mutate`` applied to a private copy, then apply it live.
+
+        ``mutate(config)`` must make the same change whichever dict it is given.
+        The running config is only touched after the file was written, and in
+        place, so daemon components holding section references see the change
+        and a failed write leaves running state exactly as it was.
+        """
+        with _CONFIG_WRITE_LOCK:
+            try:
+                candidate = copy.deepcopy(self.config)
+                mutate(candidate)
+                if not self._persist_config(candidate):
+                    return False
+                mutate(self.config)
+                normalize_modem_config_in_place(self.config)
+                return True
+            except Exception:
+                logger.exception("Failed to save config to %s", self.config_path)
+                return False
+
     def _persist_config(self, config: dict, *, normalize_modem: bool = True) -> bool:
         """Write a private candidate; the atomic replace is the commit point."""
         temporary_path = None

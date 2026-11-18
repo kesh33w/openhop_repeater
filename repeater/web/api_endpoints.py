@@ -4912,11 +4912,15 @@ class APIEndpoints:
                 return self._error("CAD control timed out; refresh to check current mode")
             effective_cad = copy.deepcopy(radio_config(self.config, radio_id).get("cad", {}) or {})
             effective_cad["enabled"] = enabled
-            if target is not None:
-                target.setdefault("radio", {})["cad"] = effective_cad
-            else:
-                self.config.setdefault("radio", {})["cad"] = effective_cad
-            if not self.config_manager.save_to_file():
+
+            def apply(config):
+                entry = next((e for e in config.get("radios", []) or []
+                              if canonical_radio_id(e) == radio_id), None)
+                section = (entry.setdefault("radio", {}) if entry is not None
+                           else config.setdefault("radio", {}))
+                section["cad"] = copy.deepcopy(effective_cad)
+
+            if not self.config_manager.apply_and_save(apply):
                 return self._error("CAD mode changed in memory but could not be saved for restart")
             return self._success({
                 "message": "CAD before transmit " + ("enabled" if enabled else "disabled"),
@@ -5190,29 +5194,30 @@ class APIEndpoints:
                 "min_threshold": min_val,
                 "symbol_num": cad_symbol_num,
             }
-            previous = copy.deepcopy(self.config)
-            entries = self.config.get("radios", []) or []
             _, default_id = physical_radios(self.daemon_instance)
-            if entries:
-                target = next(
-                    (entry for entry in entries if canonical_radio_id(entry) == radio_id), None
-                )
-                if target is None:
-                    return self._error(f"No configuration entry for radio_id={radio_id!r}")
-                # Freeze inherited values before changing the legacy default block.
-                # Otherwise saving SMF would silently retune a radio that inherits it.
-                if radio_id == default_id:
-                    for entry in entries:
-                        effective = radio_config(self.config, canonical_radio_id(entry))
-                        entry.setdefault("radio", {}).setdefault(
-                            "cad", copy.deepcopy(effective.get("cad", {}))
-                        )
-                target.setdefault("radio", {})["cad"] = settings.copy()
-            if not entries or radio_id == default_id:
-                self.config.setdefault("radio", {})["cad"] = settings.copy()
-            if not self.config_manager.save_to_file():
-                self.config.clear()
-                self.config.update(previous)
+            entries = self.config.get("radios", []) or []
+            if entries and not any(canonical_radio_id(e) == radio_id for e in entries):
+                return self._error(f"No configuration entry for radio_id={radio_id!r}")
+
+            def apply(config):
+                entries = config.get("radios", []) or []
+                if entries:
+                    target = next(e for e in entries if canonical_radio_id(e) == radio_id)
+                    # Freeze inherited values before changing the legacy default block.
+                    # Otherwise saving SMF would silently retune a radio that inherits it.
+                    if radio_id == default_id:
+                        for entry in entries:
+                            effective = radio_config(config, canonical_radio_id(entry))
+                            entry.setdefault("radio", {}).setdefault(
+                                "cad", copy.deepcopy(effective.get("cad", {}))
+                            )
+                    target.setdefault("radio", {})["cad"] = settings.copy()
+                if not entries or radio_id == default_id:
+                    config.setdefault("radio", {})["cad"] = settings.copy()
+
+            # Staged on a copy under the config lock; live sections are only
+            # changed in place after the file write succeeds.
+            if not self.config_manager.apply_and_save(apply):
                 return self._error("Failed to save configuration to file")
             if hasattr(radio, "set_custom_cad_thresholds"):
                 radio.set_custom_cad_thresholds(peak=peak, min_val=min_val)

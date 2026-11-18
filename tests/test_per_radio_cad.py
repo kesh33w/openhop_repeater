@@ -171,11 +171,21 @@ def test_default_save_syncs_legacy_preserves_other_inheritance(api):
 
 def test_save_failure_does_not_change_live_or_config(api):
     before = copy.deepcopy(api.config)
-    api.config_manager.save_to_file = Mock(return_value=False)
+    sections = {key: id(value) for key, value in api.config.items()}
+    api.config_manager._persist_config = Mock(return_value=False)
     body(radio_id="bay", peak=20, min_val=8)
     assert not api.save_cad_settings()["success"]
     assert api.config == before
+    # Nothing was swapped out: daemon helpers keep their section references.
+    assert {key: id(value) for key, value in api.config.items()} == sections
     assert not api.bay.calls and not api.smf.calls
+
+
+def test_successful_save_updates_live_sections_in_place(api):
+    radios = api.config["radios"]
+    body(radio_id="bay", peak=20, min_val=8)
+    assert api.save_cad_settings()["success"]
+    assert api.config["radios"] is radios
 
 
 @pytest.mark.parametrize(

@@ -165,8 +165,12 @@ class ChannelBridge:
                 CryptoUtils.mac_then_decrypt(channel.secret[:16], channel.secret, payload[1:])
             except ValueError:
                 continue
+            # A channel named by a rule on this side in either direction is
+            # under explicit control. A one-way B->A mapping must not let the
+            # same channel leak A->B as an opaque copy.
             if channel.name in disabled_channels or any(
-                rule.source.name == home and rule.source_channel == channel.name
+                (rule.source.name == home and rule.source_channel == channel.name)
+                or (rule.target.name == home and rule.target_channel == channel.name)
                 for rule in self.crossings
             ):
                 return True

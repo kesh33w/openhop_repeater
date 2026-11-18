@@ -1454,22 +1454,44 @@ class RepeaterHandler(BaseHandler):
         here without revisiting that invariant.
         """
         pkt_hash = packet_hash or packet.calculate_packet_hash().hex().upper()
+        return self._seen_keys(packet, pkt_hash)[0] in self.seen_packets
+
+    def _seen_keys(self, packet: Packet, pkt_hash: str) -> list:
+        """Duplicate-cache keys for ``packet``; the first is the one to look up.
+
+        With a topology, a received copy is keyed by its ingress network (and
+        forwarding class when receivers exist). A packet originated here has no
+        ingress radio, so it is keyed under every network/class as well as the
+        bare hash: a neighbour later repeating our own packet back to us on any
+        network must be recognised as a duplicate, as it is without topology.
+        """
         topology = getattr(self, "network_topology", None)
+        if not topology:
+            return [pkt_hash]
         rid = getattr(packet, "_rx_radio_id", None)
-        if topology and rid is not None:
-            pkt_hash = (topology.network(rid), topology.forwarding_class(rid), pkt_hash) if topology.has_receivers else (topology.network(rid), pkt_hash)
-        return pkt_hash in self.seen_packets
+        if rid is not None:
+            if topology.has_receivers:
+                return [(topology.network(rid), topology.forwarding_class(rid), pkt_hash)]
+            return [(topology.network(rid), pkt_hash)]
+        keys = [pkt_hash]
+        for member in topology.members:
+            if topology.has_receivers:
+                key = (topology.network(member), topology.forwarding_class(member), pkt_hash)
+            else:
+                key = (topology.network(member), pkt_hash)
+            if key not in keys:
+                keys.append(key)
+        return keys
 
     def mark_seen(self, packet: Packet, packet_hash: Optional[str] = None):
 
         pkt_hash = packet_hash or packet.calculate_packet_hash().hex().upper()
-        topology = getattr(self, "network_topology", None)
-        rid = getattr(packet, "_rx_radio_id", None)
-        if topology and rid is not None:
-            pkt_hash = (topology.network(rid), topology.forwarding_class(rid), pkt_hash) if topology.has_receivers else (topology.network(rid), pkt_hash)
-        self.seen_packets[pkt_hash] = time.time()
+        now = time.time()
+        for key in self._seen_keys(packet, pkt_hash):
+            self.seen_packets[key] = now
+            self.seen_packets.move_to_end(key)
 
-        if len(self.seen_packets) > self.max_cache_size:
+        while len(self.seen_packets) > self.max_cache_size:
             self.seen_packets.popitem(last=False)
 
     def validate_packet(self, packet: Packet) -> Tuple[bool, str]:

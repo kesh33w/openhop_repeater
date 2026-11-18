@@ -200,6 +200,11 @@ class ReceiptSession:
         expected = hmac.new(self.server.secret, (challenge+'\0'+session).encode(), hashlib.sha256).hexdigest()
         if not hmac.compare_digest(expected, auth['proof']):
             raise ValueError('Authentication failed')
+        # Only an authenticated client takes the single receipt slot, so an
+        # unauthenticated connection can never hold it against the real bot.
+        if self.server.session is not None:
+            raise ValueError('Receipt session already active')
+        self.server.session = self
         self.session_id = session
         self.reader_generations = {rid: radio.rx_receipt_generation for rid,radio in self.server.radios.items()}
         if not self.healthy():
@@ -266,16 +271,18 @@ class RawReceiptServer:
         except Exception:
             self.session.fail('observation_failed')
 
+    # Unauthenticated connections allowed at once. Each must authenticate
+    # within the read timeout, so holding them all requires constant effort.
+    MAX_PENDING_AUTH = 8
+
     async def _client(self, reader, writer):
         task = asyncio.current_task()
-        self._clients.add(task)
         # Never evict an existing bot proof connection.
-        if self.session is not None:
+        if self.session is not None or len(self._clients) >= self.MAX_PENDING_AUTH + 1:
             writer.close()
-            self._clients.discard(task)
             return
+        self._clients.add(task)
         session = ReceiptSession(self, reader, writer)
-        self.session = session
         try:
             await session.run()
         except (Exception, asyncio.CancelledError):

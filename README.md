@@ -7,6 +7,7 @@
 
 ## Changes at a glance
 
+- **Antenna identities in paths:** Optionally replace our hop in repeated floods with an alias naming the antenna that heard the packet and the one that sent it, readable by any observer. Off by default; 2- and 3-byte paths only. [Details](docs/tx-identities.md).
 - **Per-radio CAD on/off:** Choose whether each supported modem checks for channel activity before transmitting. The setting persists across restarts and only changes after a firmware acknowledgement. [Details](docs/cad-mode.md).
 - **Quad-radio reception:** Add two extra receive radios across two mesh frequencies. Each network keeps one designated transmitter, so extra receivers can contribute packets without transmitting themselves.
 - **Receive-only comparison mode:** Run an added radio in `shadow` mode to compare reception before enabling forwarding. Shadow traffic cannot trigger transmissions or replies.

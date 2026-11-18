@@ -50,7 +50,9 @@ def runtime_binding(daemon, config):
     receivers = config['receivers']
     endpoint = config['companion_endpoint']
     if (not isinstance(key, str) or len(key) != 64 or bytes.fromhex(key).hex() != key
-            or not isinstance(receivers, list) or len(receivers) != 2 or len(set(receivers)) != 2
+            or not isinstance(receivers, list) or not receivers
+            or any(not isinstance(r, str) or not r for r in receivers)
+            or len(set(receivers)) != len(receivers)
             or not isinstance(endpoint, list) or len(endpoint) != 2
             or not isinstance(endpoint[0], str) or type(endpoint[1]) is not int):
         raise ValueError('Invalid receipt binding')

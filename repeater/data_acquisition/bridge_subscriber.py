@@ -108,12 +108,18 @@ class BridgeSubscriber:
             failed = False
             try:
                 endpoint = urlsplit(self.settings.url)
-                self.client = mqtt.Client(
+                kwargs = dict(
                     client_id="bridge-rx-" + uuid.uuid4().hex,
                     clean_session=True,
                     protocol=mqtt.MQTTv311,
                     transport="websockets",
                 )
+                # paho-mqtt 2.x requires an explicit callback API version; the
+                # callbacks below accept both the v1 and v2 argument shapes.
+                callback_api = getattr(mqtt, "CallbackAPIVersion", None)
+                if callback_api is not None:
+                    kwargs["callback_api_version"] = callback_api.VERSION2
+                self.client = mqtt.Client(**kwargs)
                 self.client.tls_set_context(ssl.create_default_context())
                 self.client.ws_set_options(path=endpoint.path or "/mqtt")
                 self.client.username_pw_set(
@@ -150,8 +156,19 @@ class BridgeSubscriber:
             else:
                 self.feed.disconnected()
                 self.evidence.feed_state(self.settings.broker, "connection_failed")
+                # The broker refused us (often bad credentials). paho retries
+                # with stored credentials, so pick up a rotated password file.
+                self._refresh_password()
 
-    def _disconnected(self, client, userdata, rc, properties=None):
+    def _refresh_password(self):
+        try:
+            self.client.username_pw_set(
+                self.settings.username, _password(self.settings.password_file)
+            )
+        except Exception:  # noqa: BLE001 - never log credential-bearing text
+            logger.warning("Independent reception subscriber credential reload failed")
+
+    def _disconnected(self, client, userdata, *args):
         with self._lock:
             if client is self.client and self.feed:
                 self.feed.disconnected()

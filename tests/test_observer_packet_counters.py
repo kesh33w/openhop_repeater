@@ -47,3 +47,22 @@ def test_one_failed_endpoint_does_not_hide_other_counters():
     right.get_status.return_value = {"tx_count": 5}
     assert collector({"left": left, "right": right})._get_radio_stats() == {
         "right": {"packets_sent": 5}}
+
+
+def test_missing_hardware_extra_does_not_break_packet_counters(monkeypatch):
+    import builtins
+    from types import SimpleNamespace
+
+    from repeater.data_acquisition.storage_collector import StorageCollector
+
+    real_import = builtins.__import__
+
+    def no_hardware(name, *args, **kwargs):
+        if name.startswith("openhop_core.hardware"):
+            raise ImportError("hardware extra not installed")
+        return real_import(name, *args, **kwargs)
+
+    collector = StorageCollector.__new__(StorageCollector)
+    collector.repeater_handler = SimpleNamespace(_fabric_endpoints=lambda: (None, ["a"]))
+    monkeypatch.setattr(builtins, "__import__", no_hardware)
+    collector._apply_radio_packet_counters(lambda rid: {})  # must not raise

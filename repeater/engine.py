@@ -211,6 +211,11 @@ class RepeaterHandler(BaseHandler):
         self.channel_bridge = BridgeSettings.from_config(config)
         if self.channel_bridge:
             self.channel_bridge.bind_routing_identity(self.local_hash_bytes)
+        from repeater.tx_identities import TxIdentities
+        self.tx_identities = TxIdentities(
+            config, self.local_hash_bytes,
+            self.channel_bridge.crossing_identity if self.channel_bridge else None,
+        )
         self.bridge_evidence = ReceptionEvidence(
             self.channel_bridge.evidence_settings if self.channel_bridge else None
         )
@@ -513,6 +518,11 @@ class RepeaterHandler(BaseHandler):
                     allow_forward = False
                     policy_reason = "Channel bridge echo"
 
+        # Normalize diagnostic aliases only for routing; retain original RX bytes.
+        identities = getattr(self, "tx_identities", None)
+        route_packet = identities.canonical_direct(packet) if identities else packet
+        if route_packet is not packet:
+            processed_packet = copy.deepcopy(route_packet)
         protocols = self.channel_bridge.protocols if self.channel_bridge else {}
         packet_types = getattr(self.channel_bridge, "packet_types", {})
         distinct_routing = bool(
@@ -529,11 +539,11 @@ class RepeaterHandler(BaseHandler):
         direct_transit = bool(
             self.channel_bridge and (
                 (not local_transmission and not peer_ingress and is_protocol_direct(
-                    packet, crossing_prefix, protocols, packet_types
+                    route_packet, crossing_prefix, protocols, packet_types
                 ))
                 or (not distinct_routing and peer_ingress
                     and self.channel_bridge.is_direct_transit(
-                        packet, crossing_prefix, local_transmission=local_transmission
+                        route_packet, crossing_prefix, local_transmission=local_transmission
                     ))
                 or trace_transit
             )
@@ -541,6 +551,11 @@ class RepeaterHandler(BaseHandler):
         protocol_flood = bool(
             not local_transmission and not peer_ingress and self.channel_bridge
             and is_protocol_flood(packet, self.local_hash_bytes, protocols, crossing_prefix, packet_types)
+            and not (identities and any(
+                bytes(packet.path[i:i + packet.get_path_hash_size()])
+                in identities.prefixes(packet.get_path_hash_size())
+                for i in range(0, len(packet.path), packet.get_path_hash_size())
+            ))
         )
 
         if (distinct_routing and direct_transit and not peer_ingress and not local_transmission
@@ -551,7 +566,7 @@ class RepeaterHandler(BaseHandler):
                 remaining_route = bytes(packet.payload[offset:])
             else:
                 width = packet.get_path_hash_size()
-                remaining_route = bytes(packet.path)
+                remaining_route = bytes(route_packet.path)
             own = {self.local_hash_bytes[:width], crossing_prefix[:width]}
             if (len(remaining_route) >= 2 * width
                     and remaining_route[:width] in own
@@ -1133,7 +1148,12 @@ class RepeaterHandler(BaseHandler):
                     packet, bridge.protocols, getattr(bridge, "packet_types", {}))):
             return False
         prefix = str(prefix).upper()
-        return len(prefix) in (2, 4, 6) and bridge.crossing_identity.hex().upper().startswith(prefix)
+        if len(prefix) not in (2, 4, 6):
+            return False
+        identities = getattr(self, "tx_identities", None)
+        aliases = identities.prefixes(len(prefix) // 2, crossing_only=True) if identities else set()
+        return (bridge.crossing_identity.hex().upper().startswith(prefix)
+                or prefix in {key.hex().upper() for key in aliases})
 
     def _is_own_echo(self, packet_hash: str, path_hashes, rx_radio_id, packet=None) -> bool:
         """True when another radio of this node is hearing our own transmission.
@@ -1530,6 +1550,9 @@ class RepeaterHandler(BaseHandler):
         hop_count = packet.get_path_hash_count()
         path = packet.path or bytearray()
         local_hashes = {self.local_hash_bytes[:hash_size]}
+        identities = getattr(self, "tx_identities", None)
+        if identities:
+            local_hashes.update(identities.prefixes(hash_size))
         if (self.channel_bridge and self.channel_bridge.peer_routing == "distinct"
                 and is_protocol_flood_candidate(
                     packet, self.channel_bridge.protocols,
@@ -2377,6 +2400,11 @@ class RepeaterHandler(BaseHandler):
         # Copy BEFORE dispatch; driver metadata and path processing from the first
         # leg cannot change what the second leg puts on air.
         packets = [copy.deepcopy(packet) for _ in targets]
+        identities = getattr(self, "tx_identities", None)
+        if identities:
+            for radio_id, leg_packet in zip(targets, packets):
+                if identities.tag(leg_packet, radio_id):
+                    logger.info("TX identity leg=%s path=%s", radio_id, leg_packet.path.hex())
         fabric, _ = self._fabric_endpoints()
 
         async def run():
@@ -2399,7 +2427,10 @@ class RepeaterHandler(BaseHandler):
 
             rows = []
             try:
-                with fabric.ordered_tx_group(primary):
+                variants = {rid: pkt.write_to() for rid, pkt in zip(targets, packets)}
+                group_options = ({"expected_frames": variants}
+                                 if len(set(variants.values())) > 1 else {})
+                with fabric.ordered_tx_group(primary, **group_options):
                     await run_ordered_group(targets, packets, send_leg, results=rows)
             finally:
                 # Preserve partial confirmation even when a caller cancels the

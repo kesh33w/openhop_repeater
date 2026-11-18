@@ -11,6 +11,11 @@ from openhop_core.protocol.constants import PAYLOAD_TYPE_TRACE
 
 logger = logging.getLogger("TxIdentities")
 
+# With 1-byte path hashes an alias is a single byte that many real nodes share,
+# so a tag cannot identify an antenna and recognising one would claim other
+# nodes' hops. Tag and recognise aliases only at 2- and 3-byte widths.
+MIN_ALIAS_WIDTH = 2
+
 
 class TxIdentities:
     def __init__(self, config, native, crossing=None, radio_ids=None):
@@ -57,21 +62,31 @@ class TxIdentities:
         self.enabled = enabled
 
     def prefixes(self, width, crossing_only=False):
+        if width < MIN_ALIAS_WIDTH:
+            return set()
         return {key[:width] for key, canonical in self.aliases.items()
                 if not crossing_only or canonical == self.crossing}
 
     def canonical_direct(self, packet):
+        """Map our aliases in a direct route back to the native/crossing identity.
+
+        The whole route is normalised so the next-hop and loop guards see every
+        hop of ours. Only 2- and 3-byte hashes are considered, where an alias
+        matching an unrelated node is about 1 in 2,000 per hop rather than 1 in 30.
+        """
         if not self.aliases or not packet.is_route_direct() or packet.get_payload_type() == PAYLOAD_TYPE_TRACE:
             return packet
         width = packet.get_path_hash_size()
+        if width < MIN_ALIAS_WIDTH:
+            return packet
+        lookup = {alias[:width]: canonical[:width] for alias, canonical in self.aliases.items()}
         path = bytearray(packet.path)
         changed = False
-        for offset in range(0, len(path), width):
-            for alias, canonical in self.aliases.items():
-                if bytes(path[offset:offset+width]) == alias[:width]:
-                    path[offset:offset+width] = canonical[:width]
-                    changed = True
-                    break
+        for offset in range(0, len(path) - width + 1, width):
+            hop = bytes(path[offset:offset + width])
+            if hop in lookup:
+                path[offset:offset + width] = lookup[hop]
+                changed = True
         if not changed:
             return packet
         result = copy.deepcopy(packet)
@@ -82,7 +97,7 @@ class TxIdentities:
         if not self.enabled or radio_id not in self.radios or not packet.is_route_flood() or packet.get_payload_type() == PAYLOAD_TYPE_TRACE:
             return False
         width = packet.get_path_hash_size()
-        if len(packet.path) < width:
+        if width < MIN_ALIAS_WIDTH or len(packet.path) < width:
             return False
         last = bytes(packet.path[-width:])
         key, crossing = self.radios[radio_id]

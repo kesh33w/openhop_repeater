@@ -23,7 +23,7 @@ def packet(width, tail, direct=False):
     p.path=bytearray(b'\x77'*width+tail[:width]);p.path_len=PathUtils.encode_path_len(width,2)
     return p
 
-@pytest.mark.parametrize('width',[1,2,3])
+@pytest.mark.parametrize('width',[2,3])
 @pytest.mark.parametrize('crossing',[False,True])
 def test_tag_and_route(width,crossing):
     ids=identities();canonical=ids.crossing if crossing else ids.native
@@ -94,3 +94,17 @@ def test_unknown_radio_is_warned_and_skipped(caplog):
                        good.native, good.crossing, radio_ids=['directional', 'rak'])
     assert ids.enabled and set(ids.radios) == {'directional'}
     assert "unknown radio 'typo'" in caplog.text
+
+
+@pytest.mark.parametrize('crossing', [False, True])
+def test_one_byte_paths_are_never_tagged_or_rewritten(crossing):
+    ids = identities()
+    canonical = ids.crossing if crossing else ids.native
+    p = packet(1, canonical)
+    raw = p.write_to()
+    assert not ids.tag(p, 'rak') and p.write_to() == raw
+    # A different node whose single byte equals one of our aliases keeps its hop.
+    alias = next(iter(ids.aliases))
+    p = packet(1, alias, direct=True)
+    assert ids.canonical_direct(p) is p
+    assert ids.prefixes(1) == set()

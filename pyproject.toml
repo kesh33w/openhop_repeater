@@ -56,6 +56,10 @@ dev = [
     "pytest-asyncio>=0.21.0",
     "ruff>=0.15.14",
     "mypy>=1.7.0",
+    # The wheel-build test runs the build backend in-process.
+    "setuptools>=61.0",
+    "wheel",
+    "setuptools_scm>=8.0",
 ]
 
 [project.scripts]

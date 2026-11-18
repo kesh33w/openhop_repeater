@@ -3,7 +3,9 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 INSTALLER = ROOT / "scripts" / "proxmox-install.sh"
 UPDATER = ROOT / "scripts" / "openhop-update"
-README = ROOT / "README.md"
+# This fork leads README.md with its own changes; the upstream install guide
+# that this test checks lives in UPSTREAM-README.md.
+README = ROOT / "UPSTREAM-README.md"
 
 
 def test_proxmox_installer_uses_debian_13() -> None:

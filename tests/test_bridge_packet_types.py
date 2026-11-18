@@ -356,14 +356,7 @@ def test_inheritance_matches_prechange_wire_eligibility():
     import importlib.util
     from pathlib import Path
 
-    old_path = (
-        Path(__file__).parents[2]
-        / "baseline"
-        / "runtime"
-        / "repeater"
-        / "bridge_protocols.py"
-    )
-    # test file resides test-suite/tests, whose parent[2] is the task workspace.
+    old_path = Path(__file__).parent / "fixtures" / "prechange_bridge_protocols.py"
     spec = importlib.util.spec_from_file_location(
         "prechange_bridge_protocols", old_path
     )

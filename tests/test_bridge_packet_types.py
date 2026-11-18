@@ -434,3 +434,21 @@ async def test_real_router_and_advert_signature_gate_reject_invalid_flood(traffi
     await PacketRouter(daemon)._route_packet(p)
     assert p.is_marked_do_not_retransmit()
     assert not rig.air.frames
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("rule_side", ["target", "unrelated"])
+async def test_one_way_mapping_blocks_reverse_opaque_copy(traffic_rig, rule_side):
+    # Only link -> local is configured for the channel heard on local (C1).
+    mappings = [{
+        "source_radio": "link", "target_radio": "local",
+        "source_channel": C2.name,
+        "target_channel": C1.name if rule_side == "target" else C2.name,
+    }]
+    rig = traffic_rig(packet_types={"grp_txt": {"flood": True}}, mappings=mappings)
+    p = group_packet()  # C1, heard on local
+    assert await rig.handler(p, _rx("local"))
+    if rule_side == "target":
+        assert rig.air.order == ["local"]  # one-way: never back across opaquely
+    else:
+        assert rig.air.order == ["local", "link"]  # unmapped channel: opaque passthrough

@@ -2736,16 +2736,21 @@ class APIEndpoints:
         self._require_post()
         if self.event_loop is None or not self.event_loop.is_running():
             return self._error("Internet Link is unavailable. No settings were changed.")
+        from .internet_link import HTTP_WAIT_SECONDS
         try:
             future = asyncio.run_coroutine_threadsafe(update(self, cherrypy.request.json), self.event_loop)
-            # A running disk write must reach a known outcome before replying.
-            result = future.result()
+            result = future.result(timeout=HTTP_WAIT_SECONDS)
             if not result:
                 return self._error("Internet Link options could not be saved. No settings were changed.")
             return self._success(result if isinstance(result, dict) else
                                  {"saved": True, "live_updated": True, "restart_required": False})
         except (ValueError, TypeError, KeyError):
             return self._error("Invalid Internet Link options. Check the service setting and traffic limits.")
+        except FutureTimeoutError:
+            # The change keeps running on the loop and is itself bounded.
+            result = self._error("Internet Link change outcome is unknown. It may still complete; refresh status before taking further action.")
+            result["outcome"] = "unknown"
+            return result
         except Exception:
             return self._error("Internet Link options could not be saved.")
 

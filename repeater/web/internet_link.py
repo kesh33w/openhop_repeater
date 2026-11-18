@@ -5,6 +5,14 @@ import copy
 from types import SimpleNamespace
 
 DEFAULTS = {"send_timeout": 1.0, "max_inflight": 4, "max_rx_tasks": 16}
+CONTROL_TIMEOUT_SECONDS = 20.0
+# The HTTP thread waits a little longer than the bounded runtime change.
+HTTP_WAIT_SECONDS = CONTROL_TIMEOUT_SECONDS + 5.0
+
+# Saves below run on the daemon event loop on purpose. The private_link
+# enrollment server read-modify-writes config.yaml on that same loop without
+# _CONFIG_WRITE_LOCK, so moving this write to a worker thread could lose a peer
+# admitted mid-save. The cost is one small fsync on an operator action.
 
 
 def candidate(config, updates):
@@ -137,13 +145,17 @@ async def _set_enabled(api, enabled):
                 if not result.get("success"):
                     return False
         try:
+            # Bounded, so a hung TLS bind or peer handshake cannot leave every
+            # later control refused as "already pending" until restart.
             if enabled:
                 if binding is None or binding.closed:
-                    daemon.private_island = await install_from_config(daemon)
+                    daemon.private_island = await asyncio.wait_for(
+                        install_from_config(daemon), CONTROL_TIMEOUT_SECONDS)
                 elif binding.paused:
-                    await binding.resume(parsed[1], parsed[2])
+                    await asyncio.wait_for(
+                        binding.resume(parsed[1], parsed[2]), CONTROL_TIMEOUT_SECONDS)
             elif binding is not None and not binding.closed:
-                await binding.pause()
+                await asyncio.wait_for(binding.pause(), CONTROL_TIMEOUT_SECONDS)
         except Exception:
             # Desired state is durably saved, but runtime activation may fail
             # (e.g. unavailable TLS port). Report both facts without exposing secrets.

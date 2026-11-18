@@ -338,13 +338,16 @@ class RawReceiptServer:
     async def close(self):
         self.fabric.remove_observation_callback(self.observe)
         if self.server:
-            self.server.close()
-            await self.server.wait_closed()
+            self.server.close()  # Stop accepting before ending live sessions.
         if self.session:
             self.session.fail('service_shutdown')
         for task in tuple(self._clients):
             task.cancel()
         await asyncio.gather(*tuple(self._clients), return_exceptions=True)
+        if self.server:
+            # Python 3.12.1+ waits here for every connection to drop, so the
+            # sessions above must already be closed or shutdown stalls.
+            await self.server.wait_closed()
         path = Path(self.socket_path)
         try:
             if self._socket_inode is not None and path.lstat().st_ino == self._socket_inode:

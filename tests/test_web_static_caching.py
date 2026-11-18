@@ -75,8 +75,13 @@ def test_bundled_frontend_matches_the_hash_rule():
     assets = Path(__file__).parents[1] / "repeater" / "web" / "html" / "assets"
     if not assets.is_dir():
         pytest.skip("no bundled frontend")
+    # Stable-named on purpose: loaded by index.html from both source and
+    # deployed builds. Unhashed names are served with revalidation, never
+    # as immutable, so a changed file is still picked up.
+    stable = {"cad-mode-control-v1.js"}
     built = [p.name for p in assets.iterdir() if p.suffix in (".js", ".css")]
-    assert built and all(StatsApp._is_hashed(name) for name in built)
+    assert built and all(StatsApp._is_hashed(name) for name in built if name not in stable)
+    assert not any(StatsApp._is_hashed(name) for name in stable)
 
 
 def test_matching_etag_answers_304(tmp_path, http):

@@ -9,7 +9,7 @@ Everything the fork adds is **opt-in**. With none of the fork's configuration se
 | | |
 |---|---|
 | **Main line** | [`kesh/bridge`](https://github.com/kesh33w/openhop_repeater/tree/kesh/bridge): what runs in production |
-| **Current release** | `kesh-2026.11.18`: see [CHANGELOG.md](CHANGELOG.md) |
+| **Releases** | Released together as **HydraHop** (`hydrahop-vX.Y.Z` tags). Current version and pins: [hydrahop](https://github.com/kesh33w/hydrahop#readme). Changes: [CHANGELOG.md](CHANGELOG.md) |
 | **Upstream base** | `openhop-dev/openhop_repeater` `dev` at `72266e2` (27 Oct 2026): see [syncing with upstream](docs/fork/upstream-sync.md) |
 | **Upstream docs** | [UPSTREAM-README.md](UPSTREAM-README.md): installers, radio support, dashboard, plugins |
 
@@ -29,27 +29,27 @@ Full reference, with every config key and default: **[docs/fork/README.md](docs/
 | **Radio** | [Per-radio CAD on/off](docs/cad-mode.md) and [per-radio CAD calibration](docs/per-radio-cad.md), set after a firmware acknowledgement. | Unchanged |
 | **Observability** | [Per-radio MQTT observer identities](docs/separate-observer-identities.md), per-radio RF receive age, [bridge diagnostics](docs/fork/bridge-api.md#diagnostics). | Off |
 | | [Independent reception evidence](docs/bridge-reception-evidence.md): allowlisted outside receivers confirm a crossing was heard. | Off |
-| **Integrations** | [Internet Link (iLink)](docs/fork/README.md#internet-link-ilink) hooks for the TLS sidecar in [kesh-openhop-bridge](https://github.com/kesh33w/kesh-openhop-bridge). | Off |
+| **Integrations** | [Internet Link (iLink)](docs/fork/README.md#internet-link-ilink) hooks for the TLS sidecar in [hydrahop](https://github.com/kesh33w/hydrahop). | Off |
 | | [Bot RF receipts](docs/bot-rf-receipts.md): an authenticated local stream for a chat bot's raw RF fallback. | Off |
 
 The fork also carries fixes to upstream behaviour that its features depend on: radio provenance, transmit outcomes, config saving and more. These are listed in the [CHANGELOG](CHANGELOG.md).
 
 ## The stack
 
-The repeater is one of four repositories released together under the same tag. The [project hub](https://github.com/kesh33w/kesh-openhop-bridge) pins the exact commits that are tested together.
+The repeater is one of four repositories released together under the same tag. The [project hub](https://github.com/kesh33w/hydrahop) pins the exact commits that are tested together.
 
 | Repository | Branch | Role |
 |---|---|---|
 | **openhop_repeater** (this repo) | `kesh/bridge` | Daemon: routing, bridge, multi-radio, web API, bundled web UI |
 | [openhop_core](https://github.com/kesh33w/openhop_core) | `kesh/bridge` | MeshCore library: radio drivers, RF fabric, topology, dispatcher |
 | [openHop_RepeaterUI](https://github.com/kesh33w/openHop_RepeaterUI) | `kesh/bridge` | Vue web UI source. It builds into `repeater/web/html` here. |
-| [kesh-openhop-bridge](https://github.com/kesh33w/kesh-openhop-bridge) | `kesh/openhop-bridge` | Hub: Internet Link sidecar, enrollment, component pins, firmware releases, upgrade guide |
+| [hydrahop](https://github.com/kesh33w/hydrahop) | `kesh/openhop-bridge` | Hub: Internet Link sidecar, enrollment, component pins, firmware releases, upgrade guide |
 
 `pyproject.toml` depends on `kesh33w/openhop_core@kesh/bridge`. Upstream core lacks modules this fork imports, such as `rf_fabric.topology`.
 
 ## Install, upgrade and test
 
-- **Deploying to a Pi:** follow the hub's [upgrade guide](https://github.com/kesh33w/kesh-openhop-bridge/blob/kesh/openhop-bridge/docs/upgrade.md). The upstream installers, Docker images and web updater in the upstream README are not verified for this fork.
+- **Deploying to a Pi:** follow the hub's [upgrade guide](https://github.com/kesh33w/hydrahop/blob/kesh/openhop-bridge/docs/upgrade.md). The upstream installers, Docker images and web updater in the upstream README are not verified for this fork.
 - **Developing:** see [CONTRIBUTING.md](CONTRIBUTING.md). In short:
 
 ```sh
@@ -66,6 +66,6 @@ Channel keys are write-only through the API. The bridge necessarily handles plai
 
 ## Upstream and license
 
-This fork builds on [OpenHop Repeater](https://github.com/openhop-dev/openhop_repeater) and [OpenHop Core](https://github.com/openhop-dev/openhop_core). It remains under the [MIT License](LICENSE). Credits for the wider system are in the hub's [NOTICE](https://github.com/kesh33w/kesh-openhop-bridge/blob/kesh/openhop-bridge/NOTICE.md).
+This fork builds on [OpenHop Repeater](https://github.com/openhop-dev/openhop_repeater) and [OpenHop Core](https://github.com/openhop-dev/openhop_core). It remains under the [MIT License](LICENSE). Credits for the wider system are in the hub's [NOTICE](https://github.com/kesh33w/hydrahop/blob/kesh/openhop-bridge/NOTICE.md).
 
-Report fork-specific problems in the [hub's issues](https://github.com/kesh33w/kesh-openhop-bridge/issues), which cover all four repositories of this fork. Include the commit and steps to reproduce, and leave out channel keys and credentials.
+Report fork-specific problems in the [hub's issues](https://github.com/kesh33w/hydrahop/issues), which cover all four repositories of this fork. Include the commit and steps to reproduce, and leave out channel keys and credentials.

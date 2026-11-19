@@ -1105,7 +1105,7 @@ class MeshCoreToMqttPusher:
             "model": OBSERVER_SOFTWARE_NAME,
             # MC2MQTT calls the software-stack label "firmware_version".
             # Keep local build metadata for diagnostics, not observer cards.
-            "firmware_version": f"OpenHop {software_version}",
+            "firmware_version": f"HydraHop {software_version}",
             "radio": radio_config or self.radio_config,
             "client_version": f"💧🍴 OpenHop HydraHop v{software_version}",
             "software_build": self.app_version,

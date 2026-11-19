@@ -46,7 +46,7 @@ async def test_unknown_ingress_does_not_refresh_a_default_radio(radio_age_rig):
 
 @pytest.mark.asyncio
 async def test_private_link_routing_context_is_not_rf_reception(radio_age_rig, monkeypatch):
-    # private_link ships separately (kesh-openhop-bridge); stub its peer guard.
+    # private_link ships separately (hydrahop); stub its peer guard.
     import sys
     import types
     from contextvars import ContextVar

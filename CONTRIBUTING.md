@@ -1,4 +1,4 @@
-# Contributing to the Kesh bridge fork
+# Contributing to HydraHop
 
 This guide covers the four repositories released together: openhop_repeater (this repo), openhop_core, openHop_RepeaterUI and kesh-openhop-bridge. For upstream OpenHop work, contribute to [openhop-dev](https://github.com/openhop-dev) directly. Questions and bug reports for any of the four go in the [hub's issues](https://github.com/kesh33w/kesh-openhop-bridge/issues).
 

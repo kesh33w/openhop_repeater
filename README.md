@@ -1,4 +1,4 @@
-# OpenHop Repeater: Kesh bridge fork
+# OpenHop Repeater: HydraHop fork
 
 This is Kesh's fork of [OpenHop Repeater](https://github.com/openhop-dev/openhop_repeater), the Python MeshCore repeater daemon. It runs one repeater on a Raspberry Pi across **two MeshCore networks on different frequencies**. It bridges selected traffic between them, takes in packets from extra receive-only radios, and keeps native local repeating on each network unchanged.
 

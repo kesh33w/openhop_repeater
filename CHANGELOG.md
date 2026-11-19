@@ -4,6 +4,8 @@ Fork-specific changes to OpenHop Repeater. Upstream changes are in upstream's hi
 
 ## [Unreleased]
 
+## [kesh-2026.11.19] - 2026-11-19
+
 ### Changed
 
 - **README and CONTRIBUTING** point feedback and bug reports at the hub's issues, the single place for all four repositories.

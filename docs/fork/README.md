@@ -43,8 +43,8 @@ channel_bridge:
     Public: "…"
     "#910public": "…"
   mappings:                 # directional; add the reverse for replies
-    - source_radio: host-rf
-      target_radio: bay
+    - source_radio: g3909
+      target_radio: g3910
       source_channel: Public
       target_channel: "#910public"
       enabled: true         # optional; false keeps the rule but stops crossings
@@ -103,13 +103,13 @@ Details: [bridge-text-markers.md](../bridge-text-markers.md).
 
 ```yaml
 radios:
-  - {id: host-rf, network: SMF, role: transceiver, radio: {...}}
-  - {id: rak909,  network: SMF, role: receiver,    radio: {...}}
-  - {id: bay,     network: SFO, role: transceiver, radio: {...}}
+  - {id: g3909,  network: SMF, role: transceiver, radio: {...}}
+  - {id: rak909, network: SMF, role: receiver,    radio: {...}}
+  - {id: g3910,  network: SFO, role: transceiver, radio: {...}}
 fabric:
   tx_mode: sticky            # default with topology; repeats stay on the ingress network
   topology:
-    networks: {SMF: host-rf, SFO: bay}
+    networks: {SMF: g3909, SFO: g3910}
     enable_receiver_forwarding: true
 ```
 
@@ -127,12 +127,12 @@ Details:
 fabric:
   topology:
     tx_groups:
-      bay: [rak910, bay]   # primary must be included; at most two radios
+      g3910: [rak910, g3910]   # primary must be included; at most two radios
 ```
 
 - Each leg goes through the normal TX lock, airtime ledger and duplicate checks.
 - If the first leg's outcome is uncertain, the remaining legs are not sent.
-- `tx_group_scopes: {bay: crossings}` limits the group to **bridged packets only**. Packets crossing in from the other network go out on both antennas for extra reach, while ordinary local repeats use the primary alone, so local airtime is unchanged. The default is `all`. See [bridged packets only](../ordered-dual-tx.md#bridged-packets-only).
+- `tx_group_scopes: {g3910: crossings}` limits the group to **bridged packets only**. Packets crossing in from the other network go out on both antennas for extra reach, while ordinary local repeats use the primary alone, so local airtime is unchanged. The default is `all`. See [bridged packets only](../ordered-dual-tx.md#bridged-packets-only).
 - Configure it in the web UI (Bridge settings → Sequential transmitters) or through `POST /api/update_tx_group`. It takes effect after a restart.
 
 Details: [ordered-dual-tx.md](../ordered-dual-tx.md).

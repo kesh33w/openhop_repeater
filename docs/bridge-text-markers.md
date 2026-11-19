@@ -5,8 +5,8 @@ Each directional channel mapping accepts an optional `text_prefix`. For example:
 ```yaml
 channel_bridge:
   mappings:
-    - source_radio: host-rf
-      target_radio: bay
+    - source_radio: g3909
+      target_radio: g3910
       source_channel: Public
       target_channel: "#910public"
       text_prefix: "↔"

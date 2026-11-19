@@ -22,7 +22,7 @@ channel_bridge:
       - broker: SFO feed
         region: SFO
         public_key: REPLACE_WITH_INDEPENDENT_RECEIVER_64_HEX_PUBLIC_KEY
-        radio_id: bay
+        radio_id: g3910
   traffic_limits:
     per_minute: 12
     burst: 3

@@ -5,7 +5,7 @@ USB/TCP modem. Existing settings remain unchanged until a user chooses a mode.
 Turning it off skips channel-activity checks before transmit and can increase
 collisions. It does not disable receive or issue a test transmission.
 
-`POST /api/set_cad_enabled` accepts `{"radio_id":"bay","enabled":false}`.
+`POST /api/set_cad_enabled` accepts `{"radio_id":"g3910","enabled":false}`.
 The modem must acknowledge control before the API changes host CAD state. A
 successful mode is saved under that physical radio's `radio.cad.enabled`, applied
 at startup/reconnect, and retained when calibration thresholds are saved. Other

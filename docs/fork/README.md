@@ -132,7 +132,8 @@ fabric:
 
 - Each leg goes through the normal TX lock, airtime ledger and duplicate checks.
 - If the first leg's outcome is uncertain, the remaining legs are not sent.
-- Configure it in the web UI (Bridge settings) or through `POST /api/update_tx_group`. It takes effect after a restart.
+- `tx_group_scopes: {bay: crossings}` limits the group to **bridged packets only**. Packets crossing in from the other network go out on both antennas for extra reach, while ordinary local repeats use the primary alone, so local airtime is unchanged. The default is `all`. See [bridged packets only](../ordered-dual-tx.md#bridged-packets-only).
+- Configure it in the web UI (Bridge settings → Sequential transmitters) or through `POST /api/update_tx_group`. It takes effect after a restart.
 
 Details: [ordered-dual-tx.md](../ordered-dual-tx.md).
 

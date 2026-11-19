@@ -28,8 +28,8 @@ A modem-confirmed TX and an independent observation are different kinds of evide
 
 | Endpoint | Purpose |
 |---|---|
-| `GET /api/tx_groups` | Saved and running transmitter order for each network, and whether a restart is pending. |
-| `POST /api/update_tx_group` | `{"primary_radio_id": "bay", "radio_ids": ["rak910-shadow", "bay"]}` saves the order for a restart; live radios are never changed. |
+| `GET /api/tx_groups` | Saved and running transmitter order and `scope` for each network, and whether a restart is pending. |
+| `POST /api/update_tx_group` | `{"primary_radio_id": "bay", "radio_ids": ["rak910-shadow", "bay"], "scope": "crossings"}` saves the order for a restart; live radios are never changed. `scope` is optional: `all` (default) or `crossings`, meaning bridged packets only. |
 
 ## CAD
 

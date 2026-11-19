@@ -16,6 +16,29 @@ fabric:
       bay: [rak910-shadow, bay]
 ```
 
+## Bridged packets only
+
+![Bridged-only dual TX: crossings use both transmitters, local repeats use one](images/bridged-only-dual-tx.svg)
+
+To double-transmit only the traffic the bridge carries across, scope the group to crossings:
+
+```yaml
+fabric:
+  topology:
+    tx_groups:
+      bay: [rak910-shadow, bay]
+    tx_group_scopes:
+      bay: crossings        # default: all
+```
+
+- **Bridged copies** go out through every radio in the group, in order. These are translated channel messages and protocol transit (DM, ACK, PATH, TRACE) sent from the other network.
+- **Everything else** on that network uses the primary alone, so local airtime does not double. That covers native repeats, replies and messages this node originates.
+- The same safeguards apply as for a full group: each leg goes through the TX lock, airtime ledger and duplicate checks, and an uncertain first leg stops the second.
+- In the web UI, choose a transmitter pair under **Bridge settings → Sequential transmitters**, then pick **Both transmitters for bridged packets only**. Save, then restart.
+- A scope only applies to a two-radio group. Saving a single transmitter clears it.
+
+## Notes
+
 Omit `tx_groups` to retain existing behavior. Receiver/shadow roles remain
 unchanged: membership grants a physical TX only inside an intentional group, not
 independent routing, replies, or forwarding. Both radios must have matching RF

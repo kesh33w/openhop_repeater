@@ -2,6 +2,8 @@
 
 This is Kesh's fork of [OpenHop Repeater](https://github.com/openhop-dev/openhop_repeater), the Python MeshCore repeater daemon. It runs one repeater on a Raspberry Pi across **two MeshCore networks on different frequencies**. It bridges selected traffic between them, takes in packets from extra receive-only radios, and keeps native local repeating on each network unchanged.
 
+![System overview: one Raspberry Pi bridging two MeshCore networks](docs/images/system-overview.svg)
+
 Everything the fork adds is **opt-in**. With none of the fork's configuration sections present, the daemon behaves like upstream.
 
 | | |
@@ -22,7 +24,7 @@ Full reference, with every config key and default: **[docs/fork/README.md](docs/
 | | [Bridge safeguards](docs/bridge-reception-evidence.md): per-direction rate limits, bounded queues, durable echo ledger, live pause. | On when the bridge is |
 | | [Sender markers](docs/bridge-text-markers.md) such as `↔ Dan: hello` on translated messages. | Off |
 | **Multi-radio** | [Network topology](docs/logical-receivers.md): two logical networks, one designated transmitter each, extra `receiver` and `shadow` radios. | Off |
-| | [Ordered dual TX](docs/ordered-dual-tx.md): send one logical packet through two antennas in turn. | Off |
+| | [Ordered dual TX](docs/ordered-dual-tx.md): send one logical packet through two antennas in turn, either for every packet or [for bridged packets only](docs/ordered-dual-tx.md#bridged-packets-only). | Off |
 | | [Antenna identities](docs/tx-identities.md): our flood hop names which antenna heard a packet and which sent it. | Off |
 | **Radio** | [Per-radio CAD on/off](docs/cad-mode.md) and [per-radio CAD calibration](docs/per-radio-cad.md), set after a firmware acknowledgement. | Unchanged |
 | **Observability** | [Per-radio MQTT observer identities](docs/separate-observer-identities.md), per-radio RF receive age, [bridge diagnostics](docs/fork/bridge-api.md#diagnostics). | Off |

@@ -2336,9 +2336,13 @@ class RepeaterHandler(BaseHandler):
         retry_unsent: bool = False,
         crossing_guard=None,
         before_dispatch=None,
+        crossing: bool = False,
         _physical_leg: bool = False,
     ):
         """Schedule a packet retransmission with delay and return the task.
+
+        ``crossing`` marks a bridged copy sent to the other network; a TX group
+        scoped to ``crossings`` only double-transmits those.
 
         Local origins and opted-in bridge egresses retry once only after an explicit
         known-unsent result. Missing confirmation or an exception is uncertain and
@@ -2353,9 +2357,12 @@ class RepeaterHandler(BaseHandler):
         if not _physical_leg and topology is not None and primary is None:
             primary = self._ask_fabric_tx_radio_id(fwd_pkt, getattr(fwd_pkt, "_rx_radio_id", None))
         if not _physical_leg and topology is not None and primary is not None:
-            targets = (
-                topology.tx_targets(primary) if hasattr(topology, "tx_targets") else (primary,)
-            )
+            if hasattr(topology, "tx_targets_for"):
+                targets = topology.tx_targets_for(primary, crossing=crossing)
+            elif hasattr(topology, "tx_targets"):
+                targets = topology.tx_targets(primary)
+            else:
+                targets = (primary,)
             if len(targets) > 1:
                 return await self._schedule_ordered_tx_group(
                     fwd_pkt,
@@ -2870,6 +2877,7 @@ class RepeaterHandler(BaseHandler):
                     if send.crossing
                     else None,
                     before_dispatch=begin_evidence if send.crossing else None,
+                    crossing=send.crossing,
                 )
                 success = bool(await task)
                 metadata = getattr(pkt, "_tx_metadata", None)

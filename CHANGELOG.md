@@ -28,6 +28,7 @@ This is the first tagged fork release. It covers everything since the fork's ups
   - per-network duplicate suppression and companion inputs;
   - logical MQTT observer streams.
 - **Ordered dual TX** (`fabric.topology.tx_groups`) with per-leg results, plus the `/api/tx_groups` and `/api/update_tx_group` endpoints.
+- **Bridged-only dual TX** (`fabric.topology.tx_group_scopes: {<primary>: crossings}`): only packets bridged from the other network use both transmitters. Ordinary local repeats keep a single send. This has a selector in Bridge settings.
 - **Antenna identities** (`tx_identity_experiment`):
   - flood-hop aliases naming the receiving and transmitting antennas (`rx_tx`, the default) or only the transmitting antenna (`tx`);
   - an alias table in the bridge diagnostics and the web UI.

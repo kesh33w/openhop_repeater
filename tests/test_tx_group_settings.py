@@ -144,3 +144,49 @@ def test_api_failed_save_does_not_claim_success(monkeypatch):
     result = api.update_tx_group()
     assert "could not be saved" in result["error"]
     assert api.config["radios"][2]["role"] == "shadow"
+
+
+def test_scope_round_trips_and_is_dropped_for_single_radio():
+    cfg = config()
+    patch = tx_group_candidate(
+        cfg,
+        {"primary_radio_id": "bay", "radio_ids": ["rak", "bay"], "scope": "crossings"},
+        runtime(),
+    )
+    staged = {**cfg, **patch}
+    assert staged["fabric"]["topology"]["tx_group_scopes"] == {"bay": "crossings"}
+    row = next(r for r in tx_group_view(staged)["groups"] if r["primary_radio_id"] == "bay")
+    assert row["scope"] == "crossings" and row["active_scope"] is None
+    # Back to a single transmitter: the scope has nothing to apply to.
+    patch = tx_group_candidate(
+        staged, {"primary_radio_id": "bay", "radio_ids": ["bay"], "scope": "crossings"}, {}
+    )
+    assert "tx_group_scopes" not in patch["fabric"]["topology"]
+    # Omitting scope means "all".
+    patch = tx_group_candidate(
+        cfg, {"primary_radio_id": "bay", "radio_ids": ["rak", "bay"]}, runtime()
+    )
+    assert "tx_group_scopes" not in patch["fabric"]["topology"]
+
+
+@pytest.mark.parametrize("scope", ["bridged", True, None])
+def test_invalid_scope_is_rejected(scope):
+    with pytest.raises(ValueError):
+        tx_group_candidate(
+            config(),
+            {"primary_radio_id": "bay", "radio_ids": ["rak", "bay"], "scope": scope},
+            runtime(),
+        )
+
+
+def test_running_scope_change_requires_restart():
+    from repeater.network_topology import topology_from_config
+
+    cfg = config()
+    cfg["fabric"]["topology"]["tx_groups"] = {"bay": ["rak", "bay"]}
+    for entry in cfg["radios"]:
+        entry.setdefault("radio", {}).setdefault("frequency", 909875000)
+    running = topology_from_config(cfg)
+    cfg["fabric"]["topology"]["tx_group_scopes"] = {"bay": "crossings"}
+    view = tx_group_view(cfg, running)
+    assert view["restart_required"] is True

@@ -432,3 +432,33 @@ async def test_deferred_local_send_outlives_bridge_queue_ttl(rig_factory):
     await asyncio.wait_for(task, timeout=10)
     assert rig.air.order == ["local"]
     assert crossing_copy._tx_metadata["reason"] == "deadline_expired"
+
+
+@pytest.mark.asyncio
+async def test_bridge_plan_marks_only_crossing_sends(rig_factory):
+    """TX groups scoped to crossings rely on the bridge flagging its crossed copies."""
+    import copy
+
+    from repeater.channel_bridge import Destination, PlannedSend
+
+    rig = rig_factory()
+    seen = {}
+    original = rig.handler.schedule_retransmit
+
+    async def spy(pkt, *args, **kwargs):
+        seen[kwargs["preferred_tx_radio_id"]] = kwargs.get("crossing")
+        return await original(pkt, *args, **kwargs)
+
+    rig.handler.schedule_retransmit = spy
+    source = packet()
+    task = await rig.handler._schedule_bridge_plan(
+        source,
+        0,
+        [
+            PlannedSend(Destination("radio", "local"), copy.deepcopy(source), False),
+            PlannedSend(Destination("radio", "link"), copy.deepcopy(source), True),
+        ],
+        source_home="local",
+    )
+    await asyncio.wait_for(task, timeout=10)
+    assert seen == {"local": False, "link": True}

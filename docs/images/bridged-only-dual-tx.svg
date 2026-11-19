@@ -1,0 +1,63 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 920 430" width="920" height="430" font-family="-apple-system, Segoe UI, Helvetica, Arial, sans-serif" font-size="13">
+  <title>Bridged-only dual TX: crossings use both transmitters, local repeats use one</title>
+  <defs>
+    <marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#475569"/>
+    </marker>
+    <marker id="g" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#15803d"/>
+    </marker>
+  </defs>
+  <rect width="920" height="430" rx="12" fill="#ffffff"/>
+  <text x="24" y="34" font-size="17" font-weight="700" fill="#0f172a">tx_group_scopes: {bay: crossings}</text>
+  <text x="24" y="54" fill="#475569">The SFO group [rak910, bay] is used only for packets bridged in from SMF. Ordinary SFO repeats use bay alone.</text>
+
+  <!-- networks -->
+  <rect x="24" y="78" width="210" height="320" rx="12" fill="#f8fafc" stroke="#cbd5e1"/>
+  <text x="40" y="102" font-weight="700" fill="#0f172a">Network SMF</text>
+  <text x="40" y="120" fill="#475569">909.875 MHz</text>
+  <rect x="40" y="140" width="178" height="44" rx="8" fill="#e2e8f0" stroke="#94a3b8"/>
+  <text x="52" y="160" font-weight="600" fill="#0f172a">Message on #Public</text>
+  <text x="52" y="176" fill="#475569">heard by host-rf</text>
+
+  <rect x="686" y="78" width="210" height="320" rx="12" fill="#f8fafc" stroke="#cbd5e1"/>
+  <text x="702" y="102" font-weight="700" fill="#0f172a">Network SFO</text>
+  <text x="702" y="120" fill="#475569">910.525 MHz</text>
+
+  <!-- bridge -->
+  <rect x="290" y="132" width="200" height="62" rx="10" fill="#dbeafe" stroke="#2563eb"/>
+  <text x="304" y="156" font-weight="700" fill="#1e3a8a">Channel bridge</text>
+  <text x="304" y="176" fill="#1e3a8a">translate → #910public</text>
+
+  <rect x="530" y="132" width="130" height="62" rx="10" fill="#dcfce7" stroke="#15803d"/>
+  <text x="542" y="156" font-weight="700" fill="#14532d">crossing = yes</text>
+  <text x="542" y="176" fill="#14532d">use whole group</text>
+
+  <!-- dual tx legs -->
+  <rect x="702" y="140" width="178" height="40" rx="8" fill="#dcfce7" stroke="#15803d"/>
+  <text x="714" y="165" fill="#14532d"><tspan font-weight="700">1.</tspan> rak910 sends</text>
+  <rect x="702" y="190" width="178" height="40" rx="8" fill="#dcfce7" stroke="#15803d"/>
+  <text x="714" y="215" fill="#14532d"><tspan font-weight="700">2.</tspan> bay sends (same packet)</text>
+
+  <!-- local repeat lane -->
+  <rect x="702" y="282" width="178" height="44" rx="8" fill="#e2e8f0" stroke="#94a3b8"/>
+  <text x="714" y="302" font-weight="600" fill="#0f172a">SFO message</text>
+  <text x="714" y="318" fill="#475569">heard on SFO</text>
+  <rect x="530" y="282" width="130" height="62" rx="10" fill="#f1f5f9" stroke="#94a3b8"/>
+  <text x="542" y="306" font-weight="700" fill="#334155">crossing = no</text>
+  <text x="542" y="326" fill="#334155">primary only</text>
+  <rect x="702" y="340" width="178" height="40" rx="8" fill="#ffffff" stroke="#94a3b8"/>
+  <text x="714" y="365" fill="#334155">bay sends once</text>
+
+  <g fill="none" stroke-width="1.8">
+    <path d="M218 162 H288" stroke="#475569" marker-end="url(#a)"/>
+    <path d="M490 163 H528" stroke="#475569" marker-end="url(#a)"/>
+    <path d="M660 160 H700" stroke="#15803d" marker-end="url(#g)"/>
+    <path d="M660 175 C680 175 682 210 700 210" stroke="#15803d" marker-end="url(#g)"/>
+    <path d="M702 304 H662" stroke="#475569" marker-end="url(#a)"/>
+    <path d="M660 330 C680 330 682 360 700 360" stroke="#475569" marker-end="url(#a)"/>
+  </g>
+  <text x="290" y="228" fill="#475569" font-size="12">Each leg passes the normal TX lock, airtime ledger and duplicate</text>
+  <text x="290" y="244" fill="#475569" font-size="12">checks. If leg 1's outcome is uncertain, leg 2 is not sent.</text>
+  <text x="290" y="412" fill="#475569" font-size="12">Airtime cost: crossings x2 on SFO; ordinary SFO repeats unchanged.</text>
+</svg>

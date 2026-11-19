@@ -8,7 +8,6 @@ import pytest
 
 from repeater.channel_bridge import AsyncEchoLedger, EchoLedger, LedgerBusyError
 from tests.test_channel_bridge import C1, C2, packet
-from tests.test_channel_bridge_engine import rig_factory  # noqa: F401
 
 
 @pytest.mark.asyncio
@@ -109,7 +108,10 @@ async def test_failed_commit_is_reported_without_claiming_sent(tmp_path):
         )
         with pytest.raises(sqlite3.DatabaseError):
             await worker.finish(token, success=True)
-        await worker._test_operation(lambda ledger: ledger.db.set_authorizer(None))
+        # set_authorizer(None) needs Python 3.11; allow-all works everywhere.
+        await worker._test_operation(
+            lambda ledger: ledger.db.set_authorizer(lambda *args: sqlite3.SQLITE_OK)
+        )
         assert await worker.contains(packet())
         assert await worker._test_operation(
             lambda ledger: ledger.db.execute("SELECT DISTINCT state FROM echoes").fetchall()
@@ -132,7 +134,7 @@ async def test_ordered_known_failure_releases_and_corrupt_startup_fails(tmp_path
 
 
 @pytest.mark.asyncio
-async def test_runtime_claims_crossing_slot_before_awaiting_ledger(rig_factory):  # noqa: F811
+async def test_runtime_claims_crossing_slot_before_awaiting_ledger(rig_factory):
     from tests.test_fabric_fanout import _rx
 
     rig = rig_factory(max_pending_crossings=1)
@@ -159,7 +161,7 @@ async def test_runtime_claims_crossing_slot_before_awaiting_ledger(rig_factory):
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("error", [sqlite3.OperationalError, LedgerBusyError])
-async def test_runtime_preserves_confirmed_tx_when_completion_commit_fails(rig_factory, error):  # noqa: F811
+async def test_runtime_preserves_confirmed_tx_when_completion_commit_fails(rig_factory, error):
     from tests.test_fabric_fanout import _rx
 
     rig = rig_factory()
@@ -193,7 +195,7 @@ def assert_echo_lookup_failure_recorded(rig, home="local"):
 @pytest.mark.parametrize("home,channel", [("local", C1), ("link", C2)])
 @pytest.mark.parametrize("mode", ["forward", "monitor", "no_tx"])
 @pytest.mark.parametrize("error", [sqlite3.OperationalError, LedgerBusyError])
-async def test_lookup_failure_preserves_rx_record_without_forwarding(  # noqa: F811
+async def test_lookup_failure_preserves_rx_record_without_forwarding(
     rig_factory, mode, error, home, channel
 ):
     from unittest.mock import AsyncMock
@@ -220,7 +222,7 @@ async def test_lookup_failure_preserves_rx_record_without_forwarding(  # noqa: F
 @pytest.mark.parametrize("home", ["local", "link"])
 @pytest.mark.parametrize("width", [1, 2, 3])
 @pytest.mark.parametrize("error", [sqlite3.OperationalError, LedgerBusyError])
-async def test_direct_lookup_failure_has_no_crossing_or_ingress_fallback(  # noqa: F811
+async def test_direct_lookup_failure_has_no_crossing_or_ingress_fallback(
     rig_factory, home, width, error
 ):
     from unittest.mock import AsyncMock
@@ -247,7 +249,7 @@ async def test_direct_lookup_failure_has_no_crossing_or_ingress_fallback(  # noq
 @pytest.mark.parametrize("home,channel,other", [("local", C1, "link"), ("link", C2, "local")])
 @pytest.mark.parametrize("mode", ["forward", "monitor", "no_tx"])
 @pytest.mark.parametrize("error", [sqlite3.OperationalError, LedgerBusyError])
-async def test_local_origin_does_not_use_rx_echo_lookup(  # noqa: F811
+async def test_local_origin_does_not_use_rx_echo_lookup(
     rig_factory, home, channel, other, mode, error
 ):
     from unittest.mock import AsyncMock
@@ -270,7 +272,7 @@ async def test_local_origin_does_not_use_rx_echo_lookup(  # noqa: F811
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("mode", ["forward", "monitor", "no_tx"])
-async def test_sqlite_read_denial_preserves_rx_record(rig_factory, mode):  # noqa: F811
+async def test_sqlite_read_denial_preserves_rx_record(rig_factory, mode):
     from tests.test_fabric_fanout import _rx
 
     rig = rig_factory()
@@ -292,7 +294,7 @@ async def test_sqlite_read_denial_preserves_rx_record(rig_factory, mode):  # noq
 
 
 @pytest.mark.asyncio
-async def test_lookup_failure_retains_known_echo_and_recovers(rig_factory):  # noqa: F811
+async def test_lookup_failure_retains_known_echo_and_recovers(rig_factory):
     from unittest.mock import AsyncMock
 
     from tests.test_fabric_fanout import _rx
@@ -319,7 +321,7 @@ async def test_lookup_failure_retains_known_echo_and_recovers(rig_factory):  # n
 
 
 @pytest.mark.asyncio
-async def test_lookup_cancellation_propagates(rig_factory):  # noqa: F811
+async def test_lookup_cancellation_propagates(rig_factory):
     from unittest.mock import AsyncMock
 
     from tests.test_fabric_fanout import _rx
@@ -377,7 +379,7 @@ async def test_daemon_drains_router_before_ordered_worker_close():
 
 
 @pytest.mark.asyncio
-async def test_runtime_releases_slot_if_reservation_is_cancelled(rig_factory):  # noqa: F811
+async def test_runtime_releases_slot_if_reservation_is_cancelled(rig_factory):
     from repeater.channel_bridge import Destination, PlannedSend
 
     rig = rig_factory(max_pending_crossings=1)
@@ -390,7 +392,9 @@ async def test_runtime_releases_slot_if_reservation_is_cancelled(rig_factory):  
     rig.handler.bridge_echoes.reserve = pause
     source = packet()
     task = await rig.handler._schedule_bridge_plan(
-        source, 0, [PlannedSend(Destination("radio", "link"), source, True)],
+        source,
+        0,
+        [PlannedSend(Destination("radio", "link"), source, True)],
         source_home="local",
     )
     await asyncio.wait_for(entered.wait(), timeout=2)
@@ -403,7 +407,7 @@ async def test_runtime_releases_slot_if_reservation_is_cancelled(rig_factory):  
 
 
 @pytest.mark.asyncio
-async def test_deferred_local_send_outlives_bridge_queue_ttl(rig_factory):  # noqa: F811
+async def test_deferred_local_send_outlives_bridge_queue_ttl(rig_factory):
     """A duty-cycle deferral longer than queue_ttl must not drop our own message.
 
     The crossing copy is still bounded by queue_ttl.
@@ -416,10 +420,14 @@ async def test_deferred_local_send_outlives_bridge_queue_ttl(rig_factory):  # no
     source = packet()
     local_copy, crossing_copy = copy.deepcopy(source), copy.deepcopy(source)
     task = await rig.handler._schedule_bridge_plan(
-        source, 1.2,
-        [PlannedSend(Destination("radio", "local"), local_copy, False),
-         PlannedSend(Destination("radio", "link"), crossing_copy, True)],
-        local_transmission=True, source_home="local",
+        source,
+        1.2,
+        [
+            PlannedSend(Destination("radio", "local"), local_copy, False),
+            PlannedSend(Destination("radio", "link"), crossing_copy, True),
+        ],
+        local_transmission=True,
+        source_home="local",
     )
     await asyncio.wait_for(task, timeout=10)
     assert rig.air.order == ["local"]

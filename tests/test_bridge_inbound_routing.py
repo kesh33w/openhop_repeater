@@ -21,7 +21,6 @@ from openhop_core.protocol.constants import (
 
 from repeater.handler_helpers.trace import TraceHelper
 from tests.test_bridge_protocols import CROSSING_KEY, KEY, PROTOCOLS, peer, trace
-from tests.test_channel_bridge_engine import rig_factory  # noqa: F401
 from tests.test_direct_bridge import ROUTES
 from tests.test_fabric_fanout import LOCAL_HASH, _router_for
 

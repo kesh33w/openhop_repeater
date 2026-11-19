@@ -391,9 +391,12 @@ def test_the_collector_facade_takes_the_egress_rows(handler):
 
 
 def test_each_leg_preserves_actual_completion_timestamp(handler):
-    rows = [dict(_egress('local'), timestamp=BASE_TS + 1.25),
-            dict(_egress('link'), timestamp=BASE_TS + 2.75), _egress('legacy')]
+    rows = [
+        dict(_egress("local"), timestamp=BASE_TS + 1.25),
+        dict(_egress("link"), timestamp=BASE_TS + 2.75),
+        _egress("legacy"),
+    ]
     handler.store_packet_egress(1, BASE_TS, rows)
     with sqlite3.connect(handler.sqlite_path) as conn:
-        got = dict(conn.execute('SELECT radio_id,timestamp FROM packet_egress'))
-    assert got == {'local': BASE_TS + 1.25, 'link': BASE_TS + 2.75, 'legacy': BASE_TS}
+        got = dict(conn.execute("SELECT radio_id,timestamp FROM packet_egress"))
+    assert got == {"local": BASE_TS + 1.25, "link": BASE_TS + 2.75, "legacy": BASE_TS}

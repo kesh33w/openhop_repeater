@@ -156,18 +156,27 @@ class TraceHelper:
             # (with or without protocols.trace) takes effect consistently.
             from openhop_core.protocol.constants import PAYLOAD_TYPE_TRACE
             from repeater.bridge_protocols import packet_type_enabled
-            if (isinstance(protocols, dict)
-                    and packet_type_enabled(PAYLOAD_TYPE_TRACE, "direct", protocols,
-                                            getattr(bridge, "packet_types", {}))
-                    and not self._is_trace_complete(packet, trace_bytes, hash_width)):
+
+            if (
+                isinstance(protocols, dict)
+                and packet_type_enabled(
+                    PAYLOAD_TYPE_TRACE, "direct", protocols, getattr(bridge, "packet_types", {})
+                )
+                and not self._is_trace_complete(packet, trace_bytes, hash_width)
+            ):
                 # Preserve received progress until the engine validates and
                 # schedules the crossing. It records the actual TX result once.
-                await self.repeater_handler(packet, {
-                    "rx_radio_id": (getattr(packet, "_rx_radio_id", None)
-                                    or getattr(packet, "rx_radio_id", None)),
-                    "snr": packet.get_snr(),
-                    "rssi": getattr(packet, "rssi", 0) or getattr(packet, "_rssi", 0),
-                })
+                await self.repeater_handler(
+                    packet,
+                    {
+                        "rx_radio_id": (
+                            getattr(packet, "_rx_radio_id", None)
+                            or getattr(packet, "rx_radio_id", None)
+                        ),
+                        "snr": packet.get_snr(),
+                        "rssi": getattr(packet, "rssi", 0) or getattr(packet, "_rssi", 0),
+                    },
+                )
                 return
 
             # Record the trace packet for dashboard/statistics

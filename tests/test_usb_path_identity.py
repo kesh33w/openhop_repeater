@@ -1,4 +1,5 @@
 """Resolve USB identities without opening any real serial device."""
+
 from types import SimpleNamespace
 
 import pytest

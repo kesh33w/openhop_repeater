@@ -26,7 +26,6 @@ from openhop_core.protocol.constants import (
 from openhop_core.protocol.crypto import CryptoUtils
 
 
-
 logger = logging.getLogger(__name__)
 MAX_BRIDGE_PREFIX_BYTES = 32
 
@@ -40,7 +39,9 @@ def validate_text_prefix(value):
         or ":" in value
         or any(unicodedata.category(char)[0] == "C" or char in "\u2028\u2029" for char in value)
     ):
-        raise ValueError("Bridge text prefix must be single-line text without colons, controls, or outer spaces")
+        raise ValueError(
+            "Bridge text prefix must be single-line text without colons, controls, or outer spaces"
+        )
     if len(value.encode("utf-8")) > MAX_BRIDGE_PREFIX_BYTES:
         raise ValueError("Bridge text prefix must be at most 32 UTF-8 bytes")
     return value
@@ -208,7 +209,8 @@ class ChannelBridge:
                     # No plaintext, marker, channel name, or key enters the log.
                     logger.warning(
                         "Bridge marked crossing skipped: text is %d UTF-8 bytes (maximum %d); local repeat unchanged",
-                        len(content), MAX_TEXT_LEN,
+                        len(content),
+                        MAX_TEXT_LEN,
                     )
                     continue
                 translated = plain[:5] + content
@@ -261,12 +263,15 @@ class EchoLedger:
         )
 
     def contains_received(self, packet):
-        return self.db.execute(
-            "SELECT 1 FROM echoes e LEFT JOIN echo_roles r "
-            "ON e.token=r.token AND e.hash=r.hash AND e.expires=r.expires "
-            "WHERE e.hash=? AND e.expires>? AND (r.role IS NULL OR r.role!='source') LIMIT 1",
-            (self.digest(packet), self.clock()),
-        ).fetchone() is not None
+        return (
+            self.db.execute(
+                "SELECT 1 FROM echoes e LEFT JOIN echo_roles r "
+                "ON e.token=r.token AND e.hash=r.hash AND e.expires=r.expires "
+                "WHERE e.hash=? AND e.expires>? AND (r.role IS NULL OR r.role!='source') LIMIT 1",
+                (self.digest(packet), self.clock()),
+            ).fetchone()
+            is not None
+        )
 
     def reserve(self, source, outgoing, *, separate_source=False):
         hashes = sorted({self.digest(source), self.digest(outgoing)})
@@ -275,7 +280,9 @@ class EchoLedger:
         with self.db:
             self.db.execute("BEGIN IMMEDIATE")
             self.db.execute("DELETE FROM echoes WHERE expires<=?", (now,))
-            self.db.execute("DELETE FROM echo_roles WHERE NOT EXISTS (SELECT 1 FROM echoes e WHERE e.token=echo_roles.token AND e.hash=echo_roles.hash AND e.expires=echo_roles.expires)")
+            self.db.execute(
+                "DELETE FROM echo_roles WHERE NOT EXISTS (SELECT 1 FROM echoes e WHERE e.token=echo_roles.token AND e.hash=echo_roles.hash AND e.expires=echo_roles.expires)"
+            )
             if any(
                 self.db.execute("SELECT 1 FROM echoes WHERE hash=?", (h,)).fetchone()
                 for h in hashes
@@ -292,7 +299,10 @@ class EchoLedger:
                 target = self.digest(outgoing)
                 self.db.executemany(
                     "INSERT OR REPLACE INTO echo_roles VALUES (?, ?, ?, ?)",
-                    [(token, h, now + self.ttl, "target" if h == target else "source") for h in hashes],
+                    [
+                        (token, h, now + self.ttl, "target" if h == target else "source")
+                        for h in hashes
+                    ],
                 )
         return token
 
@@ -302,7 +312,9 @@ class EchoLedger:
                 self.db.execute("UPDATE echoes SET state='sent' WHERE token=?", (token,))
             else:
                 self.db.execute("DELETE FROM echoes WHERE token=? AND state='pending'", (token,))
-                self.db.execute("DELETE FROM echo_roles WHERE NOT EXISTS (SELECT 1 FROM echoes e WHERE e.token=echo_roles.token AND e.hash=echo_roles.hash AND e.expires=echo_roles.expires)")
+                self.db.execute(
+                    "DELETE FROM echo_roles WHERE NOT EXISTS (SELECT 1 FROM echoes e WHERE e.token=echo_roles.token AND e.hash=echo_roles.hash AND e.expires=echo_roles.expires)"
+                )
 
     def close(self):
         self.db.close()
@@ -378,7 +390,7 @@ class AsyncEchoLedger:
     def _freeze(packet, network=None):
         digest = bytes(packet.calculate_packet_hash())
         if network is not None:
-            digest = hashlib.sha256(network.encode() + b'\0' + digest).digest()
+            digest = hashlib.sha256(network.encode() + b"\0" + digest).digest()
         return _FrozenDigest(digest)
 
     async def contains(self, packet, *, network=None, received_only=False):
@@ -386,12 +398,20 @@ class AsyncEchoLedger:
         # Honor pre-topology reservations during migration until their normal expiry.
         legacy = self._freeze(packet)
         contains = self._ledger.contains_received if received_only else self._ledger.contains
-        return await self._run(lambda: contains(frozen) or
-                               (network is not None and self._ledger.contains(legacy)))
+        return await self._run(
+            lambda: contains(frozen) or (network is not None and self._ledger.contains(legacy))
+        )
 
-    async def reserve(self, source, outgoing, *, source_network=None, target_network=None, separate_source=False):
-        source, outgoing = self._freeze(source, source_network), self._freeze(outgoing, target_network)
-        return await self._run(lambda: self._ledger.reserve(source, outgoing, separate_source=separate_source))
+    async def reserve(
+        self, source, outgoing, *, source_network=None, target_network=None, separate_source=False
+    ):
+        source, outgoing = (
+            self._freeze(source, source_network),
+            self._freeze(outgoing, target_network),
+        )
+        return await self._run(
+            lambda: self._ledger.reserve(source, outgoing, separate_source=separate_source)
+        )
 
     async def finish(self, token, *, success):
         return await self._run(lambda: self._ledger.finish(token, success=success))
@@ -480,6 +500,7 @@ class BridgeSettings:
         self.native_identity = None
         self.crossing_identity = None
         from repeater.network_topology import bridge_radio_ids
+
         ids = bridge_radio_ids(config)
         if len(ids) != 2:
             raise ValueError("channel_bridge requires exactly two distinct named radios")
@@ -635,7 +656,10 @@ class BridgeSettings:
     def plan(self, packet, home, context, *, direct_transit=False, protocol_flood=False):
         if home not in self.radio_ids:
             return ()
-        if protocol_flood and packet.get_payload_type() in (PAYLOAD_TYPE_GRP_TXT, PAYLOAD_TYPE_GRP_DATA):
+        if protocol_flood and packet.get_payload_type() in (
+            PAYLOAD_TYPE_GRP_TXT,
+            PAYLOAD_TYPE_GRP_DATA,
+        ):
             # A configured channel selection is authoritative, including disabled
             # mappings. Never send both an opaque copy and a translated copy.
             protocol_flood = not self.planner.has_channel_selection(

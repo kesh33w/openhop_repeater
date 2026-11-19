@@ -292,15 +292,18 @@ def companion_receive_members(bridge):
         topology = getattr(fabric, "topology", None)
         resolver = getattr(fabric, "logical_receiver", None)
         home = getattr(bridge, "_receive_home_radio_id", None)
-        if (not isinstance(network, str) or topology is None or resolver is None
-                or topology.networks.get(network) != home):
+        if (
+            not isinstance(network, str)
+            or topology is None
+            or resolver is None
+            or topology.networks.get(network) != home
+        ):
             return frozenset()
         try:
             members = resolver.members(network)
             # Membership changes must not admit a shadow or cross-band source.
             if home not in members or any(
-                topology.is_shadow(rid) or topology.network(rid) != network
-                for rid in members
+                topology.is_shadow(rid) or topology.network(rid) != network for rid in members
             ):
                 return frozenset()
             return frozenset(members)

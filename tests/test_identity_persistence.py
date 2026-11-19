@@ -51,7 +51,10 @@ def test_wrapped_or_missing_identity_file_does_not_block_saves(tmp_path, save_pa
     encoded = base64.b64encode(key)
     key_file.write_bytes(encoded[:40] + b"\n" + encoded[40:] + b"\n")  # base64 CLI wraps
     config_file = tmp_path / "config.yaml"
-    config = {"repeater": {"identity_file": str(key_file), "identity_key": key}, "radio_type": "null"}
+    config = {
+        "repeater": {"identity_file": str(key_file), "identity_key": key},
+        "radio_type": "null",
+    }
     config_file.write_text(yaml.safe_dump({"repeater": {"identity_file": str(key_file)}}))
 
     def save():

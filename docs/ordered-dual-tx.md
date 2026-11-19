@@ -6,7 +6,7 @@ radio in either order. For SF Sac Bridge, the intended choices are directional
 then RAK, or RAK then directional. Changes require restart and are not applied to
 the live radios by saving the form.
 
-Requires the matching OpenHop Core `feat/ordered-tx-groups` feature. Example:
+Requires the matching openhop_core `kesh/bridge` (release `kesh-2026.11.18` or later). Example:
 
 ```yaml
 fabric:

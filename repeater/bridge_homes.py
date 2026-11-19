@@ -22,9 +22,12 @@ def validate_companion_home(config, settings, *, context="Companion"):
             topology = topology_from_config(config)
         except ValueError as exc:
             raise BridgeHomeAssignmentError(f"{context} invalid receive topology: {exc}") from exc
-        if (not isinstance(network, str) or topology is None
-                or network not in topology.networks
-                or topology.networks[network] != home):
+        if (
+            not isinstance(network, str)
+            or topology is None
+            or network not in topology.networks
+            or topology.networks[network] != home
+        ):
             raise BridgeHomeAssignmentError(
                 f"{context} receive_network must name a network with its designated TX home"
             )
@@ -51,6 +54,7 @@ def validate_bridge_homes(config):
         if not isinstance(companion, dict):
             raise BridgeHomeAssignmentError(f"identities.companions[{index}] must be an object")
         validate_companion_home(
-            config, companion.get("settings") or {},
+            config,
+            companion.get("settings") or {},
             context=f"Companion '{companion.get('name') or index}'",
         )

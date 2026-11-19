@@ -17,7 +17,6 @@ from openhop_core.protocol.constants import (
 from openhop_core.protocol.packet_utils import PathUtils
 
 from repeater.channel_bridge import BridgeSettings
-from tests.test_channel_bridge_engine import rig_factory  # noqa: F401
 from tests.test_fabric_fanout import LOCAL_HASH, _direct, _rx
 
 ROUTES = [

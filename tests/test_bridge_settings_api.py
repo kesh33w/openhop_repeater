@@ -190,13 +190,16 @@ def test_direct_routes_default_off_and_save_without_channels(config):
     assert bridge_candidate(config, {"direct_routes": []})["direct_routes"] == []
 
 
-@pytest.mark.parametrize("routes", [
-    [{"source_radio": "a", "target_radio": "a"}],
-    [{"source_radio": "unknown", "target_radio": "b"}],
-    [{"source_radio": "a", "target_radio": "b"}] * 2,
-    [{"source_radio": "a", "target_radio": "b", "unexpected": True}],
-    "a:b",
-])
+@pytest.mark.parametrize(
+    "routes",
+    [
+        [{"source_radio": "a", "target_radio": "a"}],
+        [{"source_radio": "unknown", "target_radio": "b"}],
+        [{"source_radio": "a", "target_radio": "b"}] * 2,
+        [{"source_radio": "a", "target_radio": "b", "unexpected": True}],
+        "a:b",
+    ],
+)
 def test_invalid_direct_route_drafts_are_rejected_atomically(config, routes):
     before = copy.deepcopy(config)
     with pytest.raises((ValueError, TypeError)):
@@ -205,10 +208,10 @@ def test_invalid_direct_route_drafts_are_rejected_atomically(config, routes):
 
 
 def test_disabled_partial_section_always_has_editor_collections():
-    config = {'radios': [{'id': 'host-rf'}], 'channel_bridge': {'enabled': False}}
+    config = {"radios": [{"id": "host-rf"}], "channel_bridge": {"enabled": False}}
     before = copy.deepcopy(config)
     result = bridge_view(config)
-    assert result['settings']['channels'] == {}
-    assert result['settings']['mappings'] == []
-    assert result['settings']['direct_routes'] == []
+    assert result["settings"]["channels"] == {}
+    assert result["settings"]["mappings"] == []
+    assert result["settings"]["direct_routes"] == []
     assert config == before

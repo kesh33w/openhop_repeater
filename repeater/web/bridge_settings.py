@@ -98,7 +98,9 @@ def bridge_candidate(config, updates, config_path=None):
     from repeater.bridge_protocols import validate_packet_types
 
     packet_types = validate_packet_types(section.get("packet_types", {}))
-    if (any(protocols.values()) or packet_types) and section.get("peer_routing", "legacy") != "distinct":
+    if (any(protocols.values()) or packet_types) and section.get(
+        "peer_routing", "legacy"
+    ) != "distinct":
         raise ValueError("New bridge protocols require distinct peer routing")
     previous = config.get("channel_bridge", {}).get("channels", {})
     for name, value in list(channels.items()):

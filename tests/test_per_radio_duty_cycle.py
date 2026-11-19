@@ -715,6 +715,7 @@ async def test_an_unplanned_send_is_charged_to_the_radio_the_send_reports():
     config["fabric"] = {"default_radio": "local", "tx_mode": "bridge"}
     handler = _make_handler(config, legacy_core=True)
     packet = _packet()
+
     async def report_actual_egress(sent_packet, **kwargs):
         sent_packet._tx_metadata = {"radio_id": "link"}
         return True

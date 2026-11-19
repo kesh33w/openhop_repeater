@@ -66,23 +66,35 @@ def view(config, binding):
     settings = {key: section.get(key, default) for key, default in DEFAULTS.items()}
     active = None
     if running:
-        active = {"send_timeout": adapter.config.send_timeout,
-                  "max_inflight": adapter.config.max_inflight, "max_rx_tasks": binding.limit}
+        active = {
+            "send_timeout": adapter.config.send_timeout,
+            "max_inflight": adapter.config.max_inflight,
+            "max_rx_tasks": binding.limit,
+        }
     peers = []
     # Snapshot maps only on the daemon's event loop, where enrollment changes them.
     if service is not None:
         for peer, transport in sorted(service.transports.items()):
-            peers.append({"id": peer, "connected": bool(transport.connected),
-                          "last_valid_inbound_frame_age_seconds": getattr(
-                              transport, "last_valid_inbound_frame_age_seconds", None)})
+            peers.append(
+                {
+                    "id": peer,
+                    "connected": bool(transport.connected),
+                    "last_valid_inbound_frame_age_seconds": getattr(
+                        transport, "last_valid_inbound_frame_age_seconds", None
+                    ),
+                }
+            )
     else:
-        peers = [{"id": peer, "connected": False,
-                  "last_valid_inbound_frame_age_seconds": None} for peer in sorted(
-            (section.get("transport") or {}).get("peer_fingerprints", {}))]
+        peers = [
+            {"id": peer, "connected": False, "last_valid_inbound_frame_age_seconds": None}
+            for peer in sorted((section.get("transport") or {}).get("peer_fingerprints", {}))
+        ]
     routes = []
     if adapter is not None:
         for (peer, radio), local in sorted(adapter.config.inbound.items()):
-            routes.append({"direction": "inbound", "peer": peer, "radio": radio, "local_radio": local})
+            routes.append(
+                {"direction": "inbound", "peer": peer, "radio": radio, "local_radio": local}
+            )
         for local, targets in sorted(adapter.config.outbound.items()):
             for peer in targets:
                 routes.append({"direction": "outbound", "peer": peer, "local_radio": local})
@@ -90,19 +102,27 @@ def view(config, binding):
         for row in section.get("inbound", []):
             routes.append({"direction": "inbound", **row})
         for local, targets in section.get("outbound", {}).items():
-            for peer in ([targets] if isinstance(targets, str) else targets):
+            for peer in [targets] if isinstance(targets, str) else targets:
                 routes.append({"direction": "outbound", "peer": peer, "local_radio": local})
     return {
         "enabled": section.get("enabled") is True,
-        "running": running, "listening": listening,
-        "listener_port": getattr(service, "port", None) or (section.get("transport") or {}).get("port"),
-        "service_control_available": bool(section.get("node_id") and (section.get("transport") or {}).get("enabled") is True),
+        "running": running,
+        "listening": listening,
+        "listener_port": getattr(service, "port", None)
+        or (section.get("transport") or {}).get("port"),
+        "service_control_available": bool(
+            section.get("node_id") and (section.get("transport") or {}).get("enabled") is True
+        ),
         "node_id": section.get("node_id"),
         "enrollment_available": listening and getattr(service, "enrollment", None) is not None,
-        "settings": settings, "active_settings": active,
+        "settings": settings,
+        "active_settings": active,
         "editable": running and listening,
-        "packet_ttl_ms": adapter.config.ttl_ms if adapter is not None else section.get("ttl_ms", 15000),
-        "peers": peers, "routes": routes,
+        "packet_ttl_ms": adapter.config.ttl_ms
+        if adapter is not None
+        else section.get("ttl_ms", 15000),
+        "peers": peers,
+        "routes": routes,
         "pending_rf": getattr(binding, "peer_pending", 0),
         "dropped_tasks": getattr(binding, "dropped", 0),
         "transport_failures": getattr(service, "failures", 0),
@@ -128,7 +148,12 @@ async def update(api, updates):
         task.add_done_callback(lambda done: None if done.cancelled() else done.exception())
         return await asyncio.shield(task)
     binding = getattr(api.daemon_instance, "private_island", None)
-    if binding is None or binding.closed or getattr(binding, "paused", False) or binding.service is None:
+    if (
+        binding is None
+        or binding.closed
+        or getattr(binding, "paused", False)
+        or binding.service is None
+    ):
         raise ValueError("Internet Link is not running")
 
     def build(_section):
@@ -162,7 +187,9 @@ async def _set_enabled(api, enabled):
             parsed = None
             if enabled:
                 section["enabled"] = True
-                parsed = _configuration(SimpleNamespace(config={**api.config, "private_island": section}))
+                parsed = _configuration(
+                    SimpleNamespace(config={**api.config, "private_island": section})
+                )
                 if (section.get("transport") or {}).get("enabled") is not True:
                     raise ValueError("Internet Link transport is not configured")
             section["enabled"] = enabled
@@ -180,17 +207,24 @@ async def _set_enabled(api, enabled):
             if enabled:
                 if binding is None or binding.closed:
                     daemon.private_island = await asyncio.wait_for(
-                        install_from_config(daemon), CONTROL_TIMEOUT_SECONDS)
+                        install_from_config(daemon), CONTROL_TIMEOUT_SECONDS
+                    )
                 elif binding.paused:
                     await asyncio.wait_for(
-                        binding.resume(parsed[1], parsed[2]), CONTROL_TIMEOUT_SECONDS)
+                        binding.resume(parsed[1], parsed[2]), CONTROL_TIMEOUT_SECONDS
+                    )
             elif binding is not None and not binding.closed:
                 await asyncio.wait_for(binding.pause(), CONTROL_TIMEOUT_SECONDS)
         except Exception:
             # Desired state is durably saved, but runtime activation may fail
             # (e.g. unavailable TLS port). Report both facts without exposing secrets.
-            return {"saved": True, "live_updated": False, "restart_required": False,
-                    "enabled": enabled, "service_error": True}
+            return {
+                "saved": True,
+                "live_updated": False,
+                "restart_required": False,
+                "enabled": enabled,
+                "service_error": True,
+            }
         return {"saved": True, "live_updated": True, "restart_required": False, "enabled": enabled}
     finally:
         api._internet_link_control_pending = False

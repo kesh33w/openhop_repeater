@@ -11,7 +11,8 @@ def collector(radios):
     storage = StorageCollector.__new__(StorageCollector)
     fabric = SimpleNamespace(get_radio=lambda rid: radios[rid])
     storage.repeater_handler = SimpleNamespace(
-        _fabric_endpoints=lambda: (fabric, list(radios)), rx_count=999, forwarded_count=888)
+        _fabric_endpoints=lambda: (fabric, list(radios)), rx_count=999, forwarded_count=888
+    )
     return storage
 
 
@@ -46,7 +47,8 @@ def test_one_failed_endpoint_does_not_hide_other_counters():
     right = Mock(spec=TCPLoRaRadio)
     right.get_status.return_value = {"tx_count": 5}
     assert collector({"left": left, "right": right})._get_radio_stats() == {
-        "right": {"packets_sent": 5}}
+        "right": {"packets_sent": 5}
+    }
 
 
 def test_missing_hardware_extra_does_not_break_packet_counters(monkeypatch):

@@ -24,7 +24,6 @@ from repeater.bridge_protocols import (
 from repeater.channel_bridge import BridgeSettings
 from repeater.web.bridge_settings import bridge_candidate, bridge_view
 from repeater.web.bridge_controls import _snapshot
-from tests.test_channel_bridge_engine import rig_factory
 from tests.test_channel_bridge import C1, C2, packet as group_packet
 from tests.test_fabric_fanout import LOCAL_HASH, _rx
 
@@ -73,9 +72,7 @@ def packet(name, route="flood", path=b""):
 def test_defaults_and_independent_overrides(name, route):
     kind = PACKET_TYPES[name]
     old_direct = name in ("txt_msg", "ack", "multipart")
-    assert packet_type_enabled(kind, route, {}, {}) == (
-        route == "direct" and old_direct
-    )
+    assert packet_type_enabled(kind, route, {}, {}) == (route == "direct" and old_direct)
     supported = not (route == "flood" and name in DIRECT_ONLY_TYPES)
     assert packet_type_enabled(kind, route, PROTOCOLS, {name: {route: False}}) is False
     assert packet_type_enabled(kind, route, {}, {name: {route: True}}) is supported
@@ -139,9 +136,7 @@ def test_malformed_payload_and_version_rejected():
 @pytest.fixture
 def traffic_rig(rig_factory, monkeypatch):
     bind = BridgeSettings.bind_routing_identity
-    monkeypatch.setattr(
-        BridgeSettings, "bind_routing_identity", lambda self, key: bind(self, KEY)
-    )
+    monkeypatch.setattr(BridgeSettings, "bind_routing_identity", lambda self, key: bind(self, KEY))
 
     def make(**settings):
         settings.setdefault("direct_routes", copy.deepcopy(ROUTES))
@@ -154,12 +149,8 @@ def traffic_rig(rig_factory, monkeypatch):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize(
-    "name", [n for n in PACKET_TYPES if n not in DIRECT_ONLY_TYPES]
-)
-async def test_selected_flood_crosses_with_marker_and_unchanged_payload(
-    traffic_rig, name
-):
+@pytest.mark.parametrize("name", [n for n in PACKET_TYPES if n not in DIRECT_ONLY_TYPES])
+async def test_selected_flood_crosses_with_marker_and_unchanged_payload(traffic_rig, name):
     rig = traffic_rig(packet_types={name: {"flood": True}})
     p = packet(name)
     original = p.write_to()
@@ -207,9 +198,7 @@ async def test_selected_direct_crosses_only_target_and_preserves_special_semanti
 )
 async def test_explicit_deny_overrides_all_existing_bundles(traffic_rig, name):
     rig = traffic_rig(protocols=PROTOCOLS, packet_types={name: {"direct": False}})
-    p = packet(
-        name, "direct", rig.handler.channel_bridge.crossing_identity[:1] + b"\xcc"
-    )
+    p = packet(name, "direct", rig.handler.channel_bridge.crossing_identity[:1] + b"\xcc")
     assert not await rig.handler(p, _rx("local"))
     assert not rig.air.frames
 
@@ -247,9 +236,7 @@ async def test_advert_do_not_retransmit_still_blocks(traffic_rig):
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("disabled", [False, True])
-async def test_channel_translation_and_disabled_mappings_precede_opaque(
-    traffic_rig, disabled
-):
+async def test_channel_translation_and_disabled_mappings_precede_opaque(traffic_rig, disabled):
     rig = traffic_rig(packet_types={"grp_txt": {"flood": True}})
     if disabled:
         for rule in rig.handler.channel_bridge.planner.crossings:
@@ -269,9 +256,7 @@ async def test_disabled_channel_blocks_opaque_unsupported_group_subtype(traffic_
         mappings=[],
     )
     p = group_packet()
-    plain = bytearray(
-        CryptoUtils.mac_then_decrypt(C1.secret[:16], C1.secret, bytes(p.payload[1:]))
-    )
+    plain = bytearray(CryptoUtils.mac_then_decrypt(C1.secret[:16], C1.secret, bytes(p.payload[1:])))
     plain[4] = 1  # cannot be translated, but still belongs to disabled channel
     p.payload = bytearray([C1.selector]) + CryptoUtils.encrypt_then_mac(
         C1.secret[:16], C1.secret, plain
@@ -336,9 +321,7 @@ async def test_local_adverts_are_unchanged_by_received_advert_switch(traffic_rig
 
 @pytest.mark.asyncio
 async def test_reverse_direction_and_direct_no_fallback(traffic_rig):
-    rig = traffic_rig(
-        packet_types={"raw_custom": {"direct": True}}, direct_routes=[ROUTES[1]]
-    )
+    rig = traffic_rig(packet_types={"raw_custom": {"direct": True}}, direct_routes=[ROUTES[1]])
     p = packet(
         "raw_custom",
         "direct",
@@ -357,9 +340,7 @@ def test_inheritance_matches_prechange_wire_eligibility():
     from pathlib import Path
 
     old_path = Path(__file__).parent / "fixtures" / "prechange_bridge_protocols.py"
-    spec = importlib.util.spec_from_file_location(
-        "prechange_bridge_protocols", old_path
-    )
+    spec = importlib.util.spec_from_file_location("prechange_bridge_protocols", old_path)
     old = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(old)
     for discovery in (False, True):
@@ -377,16 +358,13 @@ def test_inheritance_matches_prechange_wire_eligibility():
                     ) == old.is_protocol_flood_candidate(p, protocols)
                     p = packet(name, "direct", KEY[:1] + b"\xcc")
                     assert is_protocol_direct(p, KEY, protocols) == (
-                        old.is_protocol_direct(p, KEY, protocols)
-                        or old.is_legacy_direct(p, KEY)
+                        old.is_protocol_direct(p, KEY, protocols) or old.is_legacy_direct(p, KEY)
                     )
 
 
 @pytest.mark.asyncio
 async def test_trace_override_does_not_disable_native_route(traffic_rig):
-    rig = traffic_rig(
-        protocols={"trace": True}, packet_types={"trace": {"direct": False}}
-    )
+    rig = traffic_rig(protocols={"trace": True}, packet_types={"trace": {"direct": False}})
     p = packet("trace", "direct", KEY[:1] + b"\xcc")
     assert await rig.handler(p, _rx("local"))
     assert rig.air.order == ["local"]
@@ -400,13 +378,9 @@ async def test_ack_controls_classify_received_packets_not_generated_redundancy(
     traffic_rig, incoming
 ):
     other = "multipart" if incoming == "ack" else "ack"
-    rig = traffic_rig(
-        packet_types={incoming: {"direct": True}, other: {"direct": False}}
-    )
+    rig = traffic_rig(packet_types={incoming: {"direct": True}, other: {"direct": False}})
     rig.handler.multi_acks = 1
-    p = packet(
-        incoming, "direct", rig.handler.channel_bridge.crossing_identity[:1] + b"\xcc"
-    )
+    p = packet(incoming, "direct", rig.handler.channel_bridge.crossing_identity[:1] + b"\xcc")
     assert await rig.handler(p, _rx("local"))
     assert rig.air.order == ["link", "link"]
     assert {p.get_payload_type() for _, p in rig.sent_packets} == {
@@ -440,11 +414,14 @@ async def test_real_router_and_advert_signature_gate_reject_invalid_flood(traffi
 @pytest.mark.parametrize("rule_side", ["target", "unrelated"])
 async def test_one_way_mapping_blocks_reverse_opaque_copy(traffic_rig, rule_side):
     # Only link -> local is configured for the channel heard on local (C1).
-    mappings = [{
-        "source_radio": "link", "target_radio": "local",
-        "source_channel": C2.name,
-        "target_channel": C1.name if rule_side == "target" else C2.name,
-    }]
+    mappings = [
+        {
+            "source_radio": "link",
+            "target_radio": "local",
+            "source_channel": C2.name,
+            "target_channel": C1.name if rule_side == "target" else C2.name,
+        }
+    ]
     rig = traffic_rig(packet_types={"grp_txt": {"flood": True}}, mappings=mappings)
     p = group_packet()  # C1, heard on local
     assert await rig.handler(p, _rx("local"))

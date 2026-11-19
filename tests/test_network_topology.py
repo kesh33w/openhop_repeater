@@ -111,16 +111,11 @@ async def test_shadow_never_dispatches_or_consumes_dedup(tmp_path, ear):
         rig.ears[ear].rx_callback(p.write_to(), -90, 8)
         await asyncio.sleep(0)
         dispatch.assert_not_called()
-        await rig.dispatcher._process_received_packet(
-            p.write_to(), -90, 8, rx_radio_id=ear
-        )
+        await rig.dispatcher._process_received_packet(p.write_to(), -90, 8, rx_radio_id=ear)
         dispatch.assert_not_called()
         assert await rig.handler(p, f._rx("local" if ear == "omni909" else "link"))
         assert set(rig.air.order) == {"local", "link"}
-        assert (
-            rig.radio.fabric.comparison.snapshot()["receivers"][ear]["unique_packets"]
-            == 1
-        )
+        assert rig.radio.fabric.comparison.snapshot()["receivers"][ear]["unique_packets"] == 1
     finally:
         rig.close()
 
@@ -171,14 +166,10 @@ async def test_delayed_concurrent_ingress_and_disconnect(tmp_path):
         a, b = packet(C1, "message A"), packet(C2, "message B")
         a._rx_radio_id = "local"
         b._rx_radio_id = "link"
-        await asyncio.gather(
-            rig.handler(a, f._rx("local")), rig.handler(b, f._rx("link"))
-        )
+        await asyncio.gather(rig.handler(a, f._rx("local")), rig.handler(b, f._rx("link")))
         assert rig.air.order.count("local") == 2 and rig.air.order.count("link") == 2
         assert not rig.air.overlapped
-        assert (
-            rig.radio.resolve_tx_radio_id(a.write_to(), rx_radio_id="local") == "local"
-        )
+        assert rig.radio.resolve_tx_radio_id(a.write_to(), rx_radio_id="local") == "local"
         rig.radio.fabric.unregister_radio("link")
         with pytest.raises(KeyError):
             await rig.radio.send(b.write_to(), radio_id="link")
@@ -191,9 +182,7 @@ async def test_delayed_concurrent_ingress_and_disconnect(tmp_path):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize(
-    "rid,channel,target", [("omni909", C1, "link"), ("omni910", C2, "local")]
-)
+@pytest.mark.parametrize("rid,channel,target", [("omni909", C1, "link"), ("omni910", C2, "local")])
 async def test_future_receiver_crossing_is_separate_from_same_network(
     tmp_path, rid, channel, target
 ):
@@ -313,9 +302,7 @@ async def test_once_per_destination_concurrent_networks_and_ack_redundancy():
             )
         )
         assert sorted(rig.air.order) == ["link", "local"]
-        ack = f._direct(
-            payload=b"1234", payload_type=PAYLOAD_TYPE_ACK, rx="local"
-        ).write_to()
+        ack = f._direct(payload=b"1234", payload_type=PAYLOAD_TYPE_ACK, rx="local").write_to()
         await rig.radio.send(ack, radio_id="local", rx_radio_id="local")
         await rig.radio.send(ack, radio_id="local", rx_radio_id="local")
         assert rig.air.order.count("local") == 3
@@ -334,9 +321,7 @@ async def test_destination_failure_release_and_uncertain_reservation():
     rig.ears["link"].send = AsyncMock(side_effect=OSError("uncertain"))
     with pytest.raises(OSError):
         await rig.radio.send(raw, radio_id="link")
-    assert (await rig.radio.send(raw, radio_id="link"))[
-        "reason"
-    ] == "destination duplicate"
+    assert (await rig.radio.send(raw, radio_id="link"))["reason"] == "destination duplicate"
     rig.close()
 
 
@@ -365,9 +350,7 @@ async def test_durable_echo_keys_are_network_scoped(tmp_path):
     ledger = AsyncEchoLedger(tmp_path / "scoped.sqlite")
     source, outgoing = packet(C1), packet(C2)
     try:
-        token = await ledger.reserve(
-            source, outgoing, source_network="909", target_network="910"
-        )
+        token = await ledger.reserve(source, outgoing, source_network="909", target_network="910")
         assert token
         assert await ledger.contains(source, network="909")
         assert not await ledger.contains(source, network="910")
@@ -409,10 +392,7 @@ def test_existing_modes_preserved_with_extra_shadows(mode, repeat, expected):
     cfg["fabric"].update(tx_mode=mode, repeat_on_ingress=repeat)
     rig = Rig(cfg)
     assert rig.handler._resolve_relay_tx_radio_ids("local") == expected
-    assert (
-        rig.radio.resolve_tx_radio_id(packet().write_to(), rx_radio_id="local")
-        == expected[0]
-    )
+    assert rig.radio.resolve_tx_radio_id(packet().write_to(), rx_radio_id="local") == expected[0]
     assert rig.handler._resolve_origin_tx_radio_ids() == ("local",)
     rig.handler.config["fabric"]["origin_tx"] = "all"
     assert rig.handler._resolve_origin_tx_radio_ids() == ("local", "link")
@@ -427,13 +407,9 @@ async def test_transmitted_echo_dedup_uses_destination_network():
     await rig.dispatcher.send_packet(p, wait_for_ack=False, radio_id="link")
     q = copy.deepcopy(p)
     q._rx_radio_id = "omni910"
-    assert rig.dispatcher.packet_filter.is_duplicate(
-        rig.dispatcher._seen_packet_hash(q)
-    )
+    assert rig.dispatcher.packet_filter.is_duplicate(rig.dispatcher._seen_packet_hash(q))
     q._rx_radio_id = "omni909"
-    assert not rig.dispatcher.packet_filter.is_duplicate(
-        rig.dispatcher._seen_packet_hash(q)
-    )
+    assert not rig.dispatcher.packet_filter.is_duplicate(rig.dispatcher._seen_packet_hash(q))
     rig.close()
 
 
@@ -460,9 +436,7 @@ async def test_dispatcher_captures_ingress_before_async_delay():
     [("local", "link"), ("link", "local"), ("omni909", "link"), ("omni910", "local")],
 )
 @pytest.mark.parametrize("multipart", [False, True])
-async def test_direct_ack_routes_and_redundancy_with_four_radios(
-    tmp_path, rid, target, multipart
-):
+async def test_direct_ack_routes_and_redundancy_with_four_radios(tmp_path, rid, target, multipart):
     cfg = config(tmp_path, receiver=True)
     cfg["channel_bridge"]["direct_routes"] = [
         {"source_radio": "local", "target_radio": "link"},

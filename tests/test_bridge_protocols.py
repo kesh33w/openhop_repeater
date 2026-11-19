@@ -35,7 +35,6 @@ from repeater.bridge_protocols import (
     is_trace_transit,
 )
 from repeater.handler_helpers.trace import TraceHelper
-from tests.test_channel_bridge_engine import rig_factory  # noqa: F401
 from tests.test_direct_bridge import ROUTES
 from tests.test_fabric_fanout import LOCAL_HASH, _rx
 
@@ -613,11 +612,14 @@ async def test_native_short_prefix_collisions_do_not_become_virtual_crossings(ri
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("protocols,packet_types,crosses", [
-    ({"trace": False}, {"trace": {"direct": True}}, True),
-    ({"trace": True}, {"trace": {"direct": False}}, False),
-    ({"trace": True}, {}, True),
-])
+@pytest.mark.parametrize(
+    "protocols,packet_types,crosses",
+    [
+        ({"trace": False}, {"trace": {"direct": True}}, True),
+        ({"trace": True}, {"trace": {"direct": False}}, False),
+        ({"trace": True}, {}, True),
+    ],
+)
 async def test_trace_helper_uses_engine_trace_eligibility(protocols, packet_types, crosses):
     from types import SimpleNamespace
 

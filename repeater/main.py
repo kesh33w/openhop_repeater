@@ -441,7 +441,10 @@ class RepeaterDaemon:
                 for radio_id, peak, minimum, symbols in applied_cad:
                     logger.info(
                         "CAD settings set from config: radio=%s peak=%s min=%s symbols=%s",
-                        radio_id, peak, minimum, symbols,
+                        radio_id,
+                        peak,
+                        minimum,
+                        symbols,
                     )
                 if not applied_cad:
                     logger.warning("Radio does not support CAD configuration")
@@ -537,17 +540,23 @@ class RepeaterDaemon:
             shared_bindings = self.config.get("mqtt_logical_observers", {})
             observer_groups = self.config.get("mqtt_observation_groups", {})
             if shared_bindings and observer_groups:
-                raise ConfigurationError("Configure logical MQTT streams or legacy groups, not both")
+                raise ConfigurationError(
+                    "Configure logical MQTT streams or legacy groups, not both"
+                )
             observer_groups = shared_bindings or observer_groups
             if observer_groups:
                 from repeater.data_acquisition.logical_observer import LogicalObserver
+
                 pusher = self.repeater_handler.storage.mqtt_handler
                 fabric = getattr(self.radio, "fabric", None)
                 if fabric is None or pusher is None:
                     raise ConfigurationError("Logical MQTT observers require fabric and MQTT")
                 self.logical_observer = LogicalObserver(
-                    observer_groups, fabric.topology, pusher,
-                    receiver=fabric.logical_receiver if shared_bindings else None)
+                    observer_groups,
+                    fabric.topology,
+                    pusher,
+                    receiver=fabric.logical_receiver if shared_bindings else None,
+                )
                 pusher.logical_observer = self.logical_observer
                 if not shared_bindings:
                     fabric.add_observation_callback(self.logical_observer.receive)
@@ -573,6 +582,7 @@ class RepeaterDaemon:
                     raise ConfigurationError("private_island.enabled must be true or false")
                 if enabled:
                     from private_link.daemon import install_from_config
+
                     self.private_island = await install_from_config(self)
             except Exception:
                 # The installer releases partial private resources before raising.
@@ -886,10 +896,7 @@ class RepeaterDaemon:
         radio = self.radio
         if home_radio_id is not None:
             configured_radio_ids(self.config)
-            entries = {
-                canonical_radio_id(entry): entry
-                for entry in self.config.get("radios", [])
-            }
+            entries = {canonical_radio_id(entry): entry for entry in self.config.get("radios", [])}
             if home_radio_id not in entries:
                 raise ValueError("Unknown companion home radio")
             settings.update(entries[home_radio_id].get("radio", {}))
@@ -937,9 +944,13 @@ class RepeaterDaemon:
             fabric = getattr(self.radio, "fabric", None)
             topology = getattr(fabric, "topology", None)
             resolver = getattr(fabric, "logical_receiver", None)
-            if (not isinstance(network, str) or topology is None or resolver is None
-                    or network not in topology.networks
-                    or topology.networks[network] != home):
+            if (
+                not isinstance(network, str)
+                or topology is None
+                or resolver is None
+                or network not in topology.networks
+                or topology.networks[network] != home
+            ):
                 raise ValueError("Companion receive_network requires its designated TX home")
             members = resolver.members(network)
             if not members or home not in members:
@@ -2388,9 +2399,12 @@ class RepeaterDaemon:
             self.bot_rf_receipts = None
             try:
                 from repeater.bot_rf_receipts import start_for_daemon
+
                 self.bot_rf_receipts = await start_for_daemon(self)
             except Exception:
-                logger.warning("Bot RF receipt service unavailable; bridge continues", exc_info=True)
+                logger.warning(
+                    "Bot RF receipt service unavailable; bridge continues", exc_info=True
+                )
 
             # Run dispatcher (handles RX/TX via openhop_core)
             try:

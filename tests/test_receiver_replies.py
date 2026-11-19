@@ -21,9 +21,7 @@ from tests.test_handler_helpers_path_protocol_text import _acl_with_client, _Sen
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("ear,home", [("omni909", "local"), ("omni910", "link")])
-async def test_extra_receiver_login_and_admin_status_return_on_same_network(
-    tmp_path, ear, home
-):
+async def test_extra_receiver_login_and_admin_status_return_on_same_network(tmp_path, ear, home):
     rig = Rig(config(tmp_path, receiver=True, repeat=False))
     router = f._router_for(rig)
     router.daemon.deliver_control_data = None
@@ -67,9 +65,7 @@ async def test_extra_receiver_login_and_admin_status_return_on_same_network(
         status.register_identity("repeater", server, identity_type="repeater")
         router.daemon.protocol_request_helper = status
         rig.air.frames.clear()
-        query, _ = PacketBuilder.create_protocol_request(
-            contact, client, REQ_TYPE_GET_STATUS
-        )
+        query, _ = PacketBuilder.create_protocol_request(contact, client, REQ_TYPE_GET_STATUS)
         query._rx_radio_id = ear
         query._snr = 2.0
         query._rssi = -75
@@ -84,9 +80,7 @@ async def test_extra_receiver_login_and_admin_status_return_on_same_network(
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("ear,home", [("omni909", "local"), ("omni910", "link")])
-async def test_extra_receiver_authenticated_text_generates_local_ack(
-    tmp_path, ear, home
-):
+async def test_extra_receiver_authenticated_text_generates_local_ack(tmp_path, ear, home):
     rig = Rig(config(tmp_path, receiver=True, repeat=False))
     router = f._router_for(rig)
     router.daemon.deliver_control_data = None
@@ -98,9 +92,7 @@ async def test_extra_receiver_authenticated_text_generates_local_ack(
         packet_injector=router.inject_packet,
         acl_dict={server.get_public_key()[0]: acl},
     )
-    helper.register_identity(
-        "repeater", server, identity_type="repeater", radio_config={}
-    )
+    helper.register_identity("repeater", server, identity_type="repeater", radio_config={})
     helper._on_message_received = AsyncMock()
     router.daemon.text_helper = helper
     request, _ = PacketBuilder.create_text_message(
@@ -133,9 +125,7 @@ async def test_core_delayed_replies_capture_request_and_never_cross_network():
     pending = []
 
     async def handler(request):
-        reply = PacketBuilder.create_ack_from_bytes(
-            bytes(request.payload[:4]), route_type="direct"
-        )
+        reply = PacketBuilder.create_ack_from_bytes(bytes(request.payload[:4]), route_type="direct")
 
         async def later():
             await asyncio.sleep(0.01)
@@ -163,9 +153,7 @@ async def test_shadow_reply_context_cannot_send_even_with_explicit_target(ear):
     rig = Rig(config())
     try:
         with pytest.raises(ValueError):
-            await rig.radio.send(
-                packet().write_to(), radio_id="local", reply_to_radio_id=ear
-            )
+            await rig.radio.send(packet().write_to(), radio_id="local", reply_to_radio_id=ear)
         p = PacketBuilder.create_ack_from_bytes(b"ABCD", route_type="direct")
         p._reply_to_radio_id = ear
         with pytest.raises(ValueError):

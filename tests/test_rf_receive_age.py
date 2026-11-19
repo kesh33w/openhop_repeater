@@ -5,44 +5,43 @@ import pytest
 from repeater import engine
 from tests import test_fabric_fanout as fabric_tests
 from tests.test_channel_bridge import packet
-from tests.test_channel_bridge_engine import rig_factory
 from tests.test_storage_collector_ws_stats_throttle import _make_collector
 
 
 @pytest.fixture
 def radio_age_rig(rig_factory, monkeypatch):
     clock = [100.0]
-    monkeypatch.setattr(engine, 'time', SimpleNamespace(time=time.time, monotonic=lambda: clock[0]))
+    monkeypatch.setattr(engine, "time", SimpleNamespace(time=time.time, monotonic=lambda: clock[0]))
     rig = rig_factory()
     yield rig, clock
     rig.handler.cleanup()
 
 
 def ages(handler):
-    return {row['radio_id']: row['seconds_since_last_rx'] for row in handler.get_rf_receive_ages()}
+    return {row["radio_id"]: row["seconds_since_last_rx"] for row in handler.get_rf_receive_ages()}
 
 
 @pytest.mark.asyncio
 async def test_raw_rx_attributes_each_radio_before_packet_parsing(radio_age_rig):
     rig, clock = radio_age_rig
-    assert ages(rig.handler) == {'local': None, 'link': None}
-    await rig.dispatcher._process_received_packet(b'', -90, 4., rx_radio_id='local')
-    clock[0] = 105.
-    await rig.dispatcher._process_received_packet(b'', -80, 5., rx_radio_id='link')
-    clock[0] = 110.
-    assert ages(rig.handler) == {'local': 10., 'link': 5.}
-    clock[0] = 115.
-    await rig.dispatcher._process_received_packet(b'', -90, 4., rx_radio_id='local')
-    assert ages(rig.handler) == {'local': 0., 'link': 10.}
+    assert ages(rig.handler) == {"local": None, "link": None}
+    await rig.dispatcher._process_received_packet(b"", -90, 4.0, rx_radio_id="local")
+    clock[0] = 105.0
+    await rig.dispatcher._process_received_packet(b"", -80, 5.0, rx_radio_id="link")
+    clock[0] = 110.0
+    assert ages(rig.handler) == {"local": 10.0, "link": 5.0}
+    clock[0] = 115.0
+    await rig.dispatcher._process_received_packet(b"", -90, 4.0, rx_radio_id="local")
+    assert ages(rig.handler) == {"local": 0.0, "link": 10.0}
     assert not rig.air.frames
 
 
 @pytest.mark.asyncio
 async def test_unknown_ingress_does_not_refresh_a_default_radio(radio_age_rig):
     rig, _ = radio_age_rig
-    for radio_id in (None, 'missing'):
-        await rig.dispatcher._process_received_packet(b'', -90, 4., rx_radio_id=radio_id)
-    assert ages(rig.handler) == {'local': None, 'link': None}
+    for radio_id in (None, "missing"):
+        await rig.dispatcher._process_received_packet(b"", -90, 4.0, rx_radio_id=radio_id)
+    assert ages(rig.handler) == {"local": None, "link": None}
 
 
 @pytest.mark.asyncio
@@ -52,39 +51,41 @@ async def test_private_link_routing_context_is_not_rf_reception(radio_age_rig, m
     import types
     from contextvars import ContextVar
 
-    stub = types.ModuleType('private_link.daemon')
-    stub.current_peer_guard = ContextVar('current_peer_guard', default=None)
-    monkeypatch.setitem(sys.modules, 'private_link', types.ModuleType('private_link'))
-    monkeypatch.setitem(sys.modules, 'private_link.daemon', stub)
+    stub = types.ModuleType("private_link.daemon")
+    stub.current_peer_guard = ContextVar("current_peer_guard", default=None)
+    monkeypatch.setitem(sys.modules, "private_link", types.ModuleType("private_link"))
+    monkeypatch.setitem(sys.modules, "private_link.daemon", stub)
     rig, clock = radio_age_rig
-    await rig.dispatcher._process_received_packet(b'', -90, 4., rx_radio_id='local')
-    clock[0] = 108.
+    await rig.dispatcher._process_received_packet(b"", -90, 4.0, rx_radio_id="local")
+    clock[0] = 108.0
     peer = packet()
     peer._private_peer = True
     peer._private_peer_deadline = time.monotonic() + 5
-    peer._rx_radio_id = 'link'
+    peer._rx_radio_id = "link"
     peer._rssi = peer._snr = None
     await fabric_tests._router_for(rig)._route_packet(peer)
-    assert ages(rig.handler) == {'local': 8., 'link': None}
+    assert ages(rig.handler) == {"local": 8.0, "link": None}
 
 
 @pytest.mark.asyncio
 async def test_http_and_websocket_heartbeats_report_age_without_resetting_it(radio_age_rig):
     rig, clock = radio_age_rig
-    await rig.dispatcher._process_received_packet(b'', -90, 4., rx_radio_id='link')
+    await rig.dispatcher._process_received_packet(b"", -90, 4.0, rx_radio_id="link")
     collector = _make_collector()
     collector.repeater_handler = rig.handler
     try:
-        clock[0] = 125.
-        assert rig.handler.get_stats()['rf_receive_ages'] == rig.handler.get_rf_receive_ages()
+        clock[0] = 125.0
+        assert rig.handler.get_stats()["rf_receive_ages"] == rig.handler.get_rf_receive_ages()
         collector._broadcast_stats_once()
-        assert collector.websocket_broadcast_stats.call_args.args[0]['system_stats']['rf_receive_ages'] == [
-            {'radio_id': 'local', 'seconds_since_last_rx': None},
-            {'radio_id': 'link', 'seconds_since_last_rx': 25.},
+        assert collector.websocket_broadcast_stats.call_args.args[0]["system_stats"][
+            "rf_receive_ages"
+        ] == [
+            {"radio_id": "local", "seconds_since_last_rx": None},
+            {"radio_id": "link", "seconds_since_last_rx": 25.0},
         ]
-        clock[0] = 130.
+        clock[0] = 130.0
         collector._broadcast_stats_once()
-        assert ages(rig.handler) == {'local': None, 'link': 30.}
+        assert ages(rig.handler) == {"local": None, "link": 30.0}
     finally:
         collector.close()
 

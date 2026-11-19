@@ -4,6 +4,10 @@ Fork-specific changes to OpenHop Repeater. Upstream changes are in upstream's hi
 
 ## [Unreleased]
 
+### Changed
+
+- **Docs:** `docs/tx-identities.md` describes the web UI setting for switching modes and records that the unused key file was removed from the Pi.
+
 ## [kesh-2026.11.18.2] - 2026-11-19
 
 ### Added

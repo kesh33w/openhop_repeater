@@ -662,6 +662,7 @@ class MeshCoreToMqttPusher:
         stats_provider: Optional[Callable[[], dict]] = None,
         radio_stats_provider: Optional[Callable[[], dict]] = None,
         reception_evidence=None,
+        hop_aliases_provider: Optional[Callable[[], list]] = None,
     ):
         self.config = config
         # Store local identity and get public key
@@ -685,6 +686,7 @@ class MeshCoreToMqttPusher:
         self.radio_config = node_info["radio_config"]
         self.stats_provider = stats_provider
         self.radio_stats_provider = radio_stats_provider
+        self.hop_aliases_provider = hop_aliases_provider
         self._status_task = None
         self._running = False
         self._shutdown_requested = False
@@ -1128,7 +1130,23 @@ class MeshCoreToMqttPusher:
         if location:
             status["location"] = location
 
+        aliases = self._hop_aliases()
+        if aliases:
+            # Names for our antenna alias hops, so a map can label them.
+            status["hop_aliases"] = aliases
+
         return self.publish("status", status, retain=True, qos=1)
+
+    def _hop_aliases(self) -> list:
+        """``[{key, label}]`` for our path-hop aliases, or empty when there are none."""
+        provider = getattr(self, "hop_aliases_provider", None)
+        if not provider:
+            return []
+        try:
+            return list(provider() or [])
+        except Exception as exc:  # pragma: no cover - reporting must not break status
+            logger.debug(f"Could not read hop aliases for status: {exc}")
+            return []
 
     def _default_radio_str(self, entries: list) -> Optional[str]:
         """Air settings of the radio Fabric transmits on by default.

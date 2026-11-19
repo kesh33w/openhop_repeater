@@ -100,6 +100,7 @@ class StorageCollector:
                     stats_provider=self._get_live_stats,
                     radio_stats_provider=self._get_radio_stats,
                     reception_evidence=getattr(repeater_handler, "bridge_evidence", None),
+                    hop_aliases_provider=self._get_hop_aliases,
                 )
                 self.mqtt_handler.connect()
 
@@ -246,6 +247,13 @@ class StorageCollector:
             stats["noise_floor"] = noise_floor
 
         return stats
+
+    def _get_hop_aliases(self) -> list:
+        """Alias hop labels for the status message; empty unless aliases exist."""
+        identities = getattr(self.repeater_handler, "tx_identities", None)
+        if identities is None or not identities.aliases:
+            return []
+        return identities.status_labels()
 
     def _get_radio_stats(self) -> dict:
         """``{radio_id: {...}}`` for the status message's radio map.

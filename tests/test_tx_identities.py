@@ -234,3 +234,21 @@ async def test_single_transmitter_send_is_tagged_with_its_pair():
     sent = Packet()
     sent.read_from(r.air.frames[-1][1])
     assert bytes(sent.path[-2:]) == ids.pairs[("link", "local")][0][:2]
+
+
+def test_status_labels_name_every_alias_key():
+    ids = pair_identities(radio_ids=("g3910", "rak910"))
+    rows = ids.status_labels()
+    by_key = {bytes.fromhex(r["key"]): r["label"] for r in rows}
+    # Every recognised alias (plain and crossing) is labelled exactly once.
+    assert set(by_key) == set(ids.aliases)
+    key, cross = ids.pairs[("g3910", "rak910")]
+    assert by_key[key] == "BD6E g3910→rak910"
+    crossing_head = ids.crossing[:2].hex().upper()
+    assert by_key[cross] == f"{crossing_head} g3910→rak910 (bridged)"
+
+
+def test_status_labels_include_legacy_tx_aliases():
+    ids = identities()
+    labels = {r["label"] for r in ids.status_labels()}
+    assert "BD6E tx directional" in labels and "BD6E tx rak" in labels

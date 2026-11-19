@@ -62,6 +62,19 @@ The same table is in the stats API as `tx_identity_aliases`
 (`prefix`, `crossing_prefix`, `rx`, `tx`; `rx` is null for `radios` aliases).
 The crossing prefix is used when the packet crossed the bridge.
 
+Every MQTT status message also lists the aliases, so maps can name them
+without anyone looking them up:
+
+```json
+"hop_aliases": [{"key": "<64 hex>", "label": "BD6E g3910→rak910"}, ...]
+```
+
+The label is our node's 2-byte prefix, then the receiving and transmitting
+radio (`tx <radio>` for `radios` aliases). Crossing aliases use the crossing
+identity's prefix and end in `(bridged)`. The keys are derived from public
+values only. CoreScope names them when its `hopAliases` setting trusts this
+observer's key (SacMesh CoreScope fork).
+
 ## Not tagged
 
 - **1-byte paths.** A 1-byte alias is shared by many real nodes, so it could not

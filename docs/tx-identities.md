@@ -72,16 +72,20 @@ The crossing prefix is used when the packet crossed the bridge.
 
 ## Deploying
 
-The first experiment (2026-11-18) was deployed by copying four files into the
-release's virtualenv on the Pi (`/opt/openhop-production/releases/08d976a…`).
-That code is committed on `kesh/bridge` and released as `kesh-2026.11.18`.
-Deploy through the hub's upgrade guide instead of copying files again, so the
-running code always matches git and an upgrade cannot silently revert it.
+Deploy through the hub's upgrade guide, never by copying files into an
+installed virtualenv, so the running code always matches git and an upgrade
+cannot silently revert it. The first experiment (2026-11-18) was copied into a
+release's virtualenv; that code is committed on `kesh/bridge` and has been
+released since `kesh-2026.11.18`.
+
+To switch modes, use **Bridge settings → Transmitters → Antenna identities** in
+the web UI (`GET /api/antenna_identities`, `POST /api/update_antenna_identities`).
+It saves the choice and applies it on restart. Production runs `rx_tx`.
 
 The first deploy script also generated Ed25519 key pairs and stored their
 private halves in `/etc/openhop_repeater/tx-experiment-identities.json`. Only
-the public keys are used, as route aliases. Nothing reads that file, and it can
-be deleted.
+the public keys were ever used, as route aliases. The file was removed from the
+Pi on 2026-11-19.
 
 Configuration notes:
 

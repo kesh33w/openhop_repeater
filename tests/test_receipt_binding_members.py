@@ -28,7 +28,7 @@ def rig(receivers):
         socket="/test",
         secret_file="/secret",
         companion_key=key,
-        companion_endpoint=["10.40.0.100", 5050],
+        companion_endpoint=["192.0.2.10", 5050],
         receivers=receivers,
         tx_radio="host-rf",
     )

@@ -11,9 +11,9 @@ Requires the matching openhop_core `kesh/bridge` (release `kesh-2026.11.18` or l
 ```yaml
 fabric:
   topology:
-    networks: {SMF: host-rf, SFO: bay}
+    networks: {SMF: g3909, SFO: g3910}
     tx_groups:
-      bay: [rak910, bay]
+      g3910: [rak910, g3910]
 ```
 
 ## Bridged packets only
@@ -26,9 +26,9 @@ To double-transmit only the traffic the bridge carries across, scope the group t
 fabric:
   topology:
     tx_groups:
-      bay: [rak910, bay]
+      g3910: [rak910, g3910]
     tx_group_scopes:
-      bay: crossings        # default: all
+      g3910: crossings        # default: all
 ```
 
 - **Bridged copies** go out through every radio in the group, in order. These are translated channel messages and protocol transit (DM, ACK, PATH, TRACE) sent from the other network.

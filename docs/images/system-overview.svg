@@ -14,7 +14,7 @@
   <text x="40" y="104" font-weight="700" fill="#0f172a">Network SMF</text>
   <text x="40" y="121" fill="#475569">909.875 MHz</text>
   <rect x="40" y="134" width="158" height="38" rx="7" fill="#dbeafe" stroke="#2563eb"/>
-  <text x="50" y="151" font-weight="600" fill="#1e3a8a">host-rf</text>
+  <text x="50" y="151" font-weight="600" fill="#1e3a8a">g3909</text>
   <text x="50" y="166" fill="#1e3a8a" font-size="12">directional · transmits</text>
   <rect x="40" y="180" width="158" height="38" rx="7" fill="#dbeafe" stroke="#2563eb"/>
   <text x="50" y="197" font-weight="600" fill="#1e3a8a">rak909</text>
@@ -27,7 +27,7 @@
   <text x="742" y="104" font-weight="700" fill="#0f172a">Network SFO</text>
   <text x="742" y="121" fill="#475569">910.525 MHz</text>
   <rect x="742" y="134" width="158" height="38" rx="7" fill="#dbeafe" stroke="#2563eb"/>
-  <text x="752" y="151" font-weight="600" fill="#1e3a8a">bay</text>
+  <text x="752" y="151" font-weight="600" fill="#1e3a8a">g3910</text>
   <text x="752" y="166" fill="#1e3a8a" font-size="12">directional · transmits</text>
   <rect x="742" y="180" width="158" height="38" rx="7" fill="#dbeafe" stroke="#2563eb"/>
   <text x="752" y="197" font-weight="600" fill="#1e3a8a">rak910</text>

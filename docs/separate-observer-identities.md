@@ -22,10 +22,10 @@ the initial rollout. Adding identity settings does not enable a destination.
 mqtt_brokers:
   separate_observer_identities: true
   observer_identities:
-    host-rf:
+    g3909:
       name: "Sacramento observer"
       use_repeater_identity: true
-    bay:
+    g3910:
       name: "Bay observer"
       private_key_file: /etc/openhop_repeater/observer-identities/bay.seed
   # Retain the existing brokers list. Each feed must have its radio_id and IATA.

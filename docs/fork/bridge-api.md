@@ -29,7 +29,7 @@ A modem-confirmed TX and an independent observation are different kinds of evide
 | Endpoint | Purpose |
 |---|---|
 | `GET /api/tx_groups` | Saved and running transmitter order and `scope` for each network, and whether a restart is pending. |
-| `POST /api/update_tx_group` | `{"primary_radio_id": "bay", "radio_ids": ["rak910", "bay"], "scope": "crossings"}` saves the order for a restart; live radios are never changed. `scope` is optional: `all` (default) or `crossings`, meaning bridged packets only. |
+| `POST /api/update_tx_group` | `{"primary_radio_id": "g3910", "radio_ids": ["rak910", "g3910"], "scope": "crossings"}` saves the order for a restart; live radios are never changed. `scope` is optional: `all` (default) or `crossings`, meaning bridged packets only. |
 
 ## Antenna identities
 
@@ -43,7 +43,7 @@ A modem-confirmed TX and an independent observation are different kinds of evide
 | Endpoint | Purpose |
 |---|---|
 | `GET /api/cad_radios` | Physical radios with their air settings, CAD support and host CAD state. |
-| `POST /api/set_cad_enabled` | `{"radio_id": "bay", "enabled": false}`. Applied only after the modem acknowledges, then saved for restart. |
+| `POST /api/set_cad_enabled` | `{"radio_id": "g3910", "enabled": false}`. Applied only after the modem acknowledges, then saved for restart. |
 | CAD calibration endpoints | Upstream endpoints. The fork adds `radio_id` to each; unknown ids are rejected rather than falling back to the default radio. |
 
 ## Internet Link

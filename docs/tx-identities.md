@@ -25,7 +25,7 @@ tx_identity_experiment:
   enabled: true
   mode: rx_tx            # or tx
   radios:                # optional in rx_tx mode; keep any already deployed
-    host-rf: "<64 hex>"
+    g3909: "<64 hex>"
 ```
 
 To stop tagging but keep resolving routes that other nodes already learned, set
@@ -55,7 +55,7 @@ To retire the experiment completely, switch it Off and leave it for a few days, 
 At startup the repeater logs one line per alias:
 
 ```
-TX identity alias 3f9a (crossing c41e): rx=bay tx=host-rf
+TX identity alias 3f9a (crossing c41e): rx=g3910 tx=g3909
 ```
 
 The same table is in the stats API as `tx_identity_aliases`

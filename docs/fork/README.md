@@ -143,7 +143,8 @@ Details: [ordered-dual-tx.md](../ordered-dual-tx.md).
 - Aliases are derived from the node key, so they are stable and need no key files.
 - Only 2- and 3-byte paths are tagged.
 - Routes that other nodes learn through an alias resolve back to this node.
-- The alias table appears under Bridge settings → Crossing diagnostics, in `GET /api/bridge_diagnostics`, and in the startup log.
+- The alias table appears under Bridge settings → Activity, in `GET /api/bridge_diagnostics`, and in the startup log.
+- Turn it off, or switch modes, under **Bridge settings → Transmitters → Antenna identities**. It applies on restart.
 
 Details: [tx-identities.md](../tx-identities.md).
 

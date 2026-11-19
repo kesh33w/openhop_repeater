@@ -36,6 +36,20 @@ An invalid section never stops the repeater. It disables the experiment and logs
 `TX identity experiment disabled: invalid configuration`. Unknown radio ids are
 logged and skipped.
 
+## Turning it on or off in the web UI
+
+**Bridge settings → Transmitters → Antenna identities** offers three choices:
+
+| Choice | Config |
+|---|---|
+| Off (single identity) | `enabled: false`. The section and its keys are kept, so routes learned through an alias still resolve. |
+| Transmitting antenna | `enabled: true`, `mode: tx`. Needs `radios` keys. |
+| Receiving + transmitting antenna | `enabled: true`, `mode: rx_tx` |
+
+Saving applies at the next restart. The panel shows the saved and running modes, plus **Validate & restart…**. The same setting is available as `GET /api/antenna_identities` and `POST /api/update_antenna_identities {"mode": "off" | "tx" | "rx_tx"}`.
+
+To retire the experiment completely, switch it Off and leave it for a few days, then remove the section from `config.yaml`. Any node still holding an old alias route falls back to flooding and relearns the single identity.
+
 ## Reading the aliases
 
 At startup the repeater logs one line per alias:

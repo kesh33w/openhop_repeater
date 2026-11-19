@@ -67,3 +67,5 @@ Channel keys are write-only through the API. The bridge necessarily handles plai
 ## Upstream and license
 
 This fork builds on [OpenHop Repeater](https://github.com/openhop-dev/openhop_repeater) and [OpenHop Core](https://github.com/openhop-dev/openhop_core). It remains under the [MIT License](LICENSE). Credits for the wider system are in the hub's [NOTICE](https://github.com/kesh33w/kesh-openhop-bridge/blob/kesh/openhop-bridge/NOTICE.md).
+
+Report fork-specific problems in the [hub's issues](https://github.com/kesh33w/kesh-openhop-bridge/issues), which cover all four repositories of this fork. Include the commit and steps to reproduce, and leave out channel keys and credentials.

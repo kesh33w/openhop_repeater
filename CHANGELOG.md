@@ -4,6 +4,10 @@ Fork-specific changes to OpenHop Repeater. Upstream changes are in upstream's hi
 
 ## [Unreleased]
 
+### Changed
+
+- **Docs:** TX group examples use the radio id `rak910` (the production RAK was renamed from `rak910-shadow`; it is an active receiver, not a shadow).
+
 ## [1.0.0] - 2026-11-19
 
 ### Fixed

@@ -79,6 +79,23 @@ def manager(device="/dev/ttyUSB-test", **settings):
     )
 
 
+def test_reads_waiting_frame_even_if_deadline_passed_while_opening(monkeypatch):
+    """A slow port open must not discard data that is already waiting."""
+    import serial
+
+    module = importlib.import_module("repeater.sensors.victron_vedirect")
+    clock = iter([0.0] + [100.0] * 1000)  # deadline computed at 0; every later check is far past it
+    monkeypatch.setattr(module.time, "monotonic", lambda: next(clock))
+    port = MagicMock()
+    port.__enter__.return_value = port
+    port.read.return_value = frame({"V": "12400"})
+    monkeypatch.setattr(serial, "Serial", MagicMock(return_value=port))
+    reading = manager().read_all()[0]
+    assert reading["ok"], reading
+    assert reading["data"]["battery_voltage_v"] == 12.4
+    assert port.read.call_count == 1
+
+
 @pytest.mark.parametrize(
     "label,raw,key,expected",
     [

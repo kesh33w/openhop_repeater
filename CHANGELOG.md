@@ -4,6 +4,10 @@ Fork-specific changes to OpenHop Repeater. Upstream changes are in upstream's hi
 
 ## [Unreleased]
 
+### Fixed
+
+- **Victron VE.Direct sensor** always reads at least once before checking its deadline. If opening the port took longer than the read deadline (a busy host), a frame already waiting was discarded and the reading failed. This also made a CI test fail at random.
+
 ### Changed
 
 - **Observer label**: MQTT status now reports `client_version` as `💧🍴 OpenHop HydraHop v<version>` and `model` as `OpenHop HydraHop`, replacing `quad-radio-bridge`. The fork is named HydraHop; README and CONTRIBUTING titles follow.

@@ -9,6 +9,7 @@ def tx_group_view(config, active_topology=None):
     topology = (config.get("fabric") or {}).get("topology") or {}
     primaries = topology.get("networks") or {}
     groups = topology.get("tx_groups") or {}
+    scopes = topology.get("tx_group_scopes") or {}
     rows = []
     for network, primary in primaries.items():
         members = []
@@ -22,25 +23,43 @@ def tx_group_view(config, active_topology=None):
             if active_topology is not None
             else None
         )
+        active_scope = (
+            active_topology.tx_group_scope(primary)
+            if active_topology is not None and hasattr(active_topology, "tx_group_scope")
+            else ("all" if active_topology is not None else None)
+        )
         rows.append(
             {
                 "network": network,
                 "primary_radio_id": primary,
                 "radio_ids": saved,
                 "active_radio_ids": active,
+                # "all": every send uses both radios; "crossings": bridged sends only.
+                "scope": scopes.get(primary, "all"),
+                "active_scope": active_scope,
                 "members": members,
             }
         )
     return {
         "groups": rows,
-        "restart_required": any(row["radio_ids"] != row["active_radio_ids"] for row in rows),
+        "restart_required": any(
+            row["radio_ids"] != row["active_radio_ids"] or row["scope"] != row["active_scope"]
+            for row in rows
+        ),
     }
 
 
 def tx_group_candidate(config, update, runtime_radios):
-    if not isinstance(update, dict) or set(update) != {"primary_radio_id", "radio_ids"}:
-        raise ValueError("Specify primary_radio_id and radio_ids only")
+    if not isinstance(update, dict) or not (
+        {"primary_radio_id", "radio_ids"}
+        <= set(update)
+        <= {"primary_radio_id", "radio_ids", "scope"}
+    ):
+        raise ValueError("Specify primary_radio_id, radio_ids and optionally scope")
     primary, ordered = update["primary_radio_id"], update["radio_ids"]
+    scope = update.get("scope", "all")
+    if scope not in ("all", "crossings"):
+        raise ValueError("scope must be 'all' or 'crossings'")
     candidate = copy.deepcopy(config)
     topology = candidate.get("fabric", {}).get("topology", {})
     primaries = topology.get("networks", {})
@@ -61,6 +80,13 @@ def tx_group_candidate(config, update, runtime_radios):
     if len(ordered) > 1 and any(rid not in runtime_radios for rid in ordered):
         raise ValueError("Both radios must be available before enabling dual TX")
     topology.setdefault("tx_groups", {})[primary] = list(ordered)
+    scopes = topology.setdefault("tx_group_scopes", {})
+    if scope == "crossings" and len(ordered) > 1:
+        scopes[primary] = "crossings"
+    else:
+        scopes.pop(primary, None)  # "all" is the default; a single radio has no group
+    if not scopes:
+        topology.pop("tx_group_scopes")
     from repeater.network_topology import topology_from_config
 
     topology_from_config(candidate)

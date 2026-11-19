@@ -231,6 +231,14 @@ paths:
                               nullable: true
                               items:
                                 type: string
+                            scope:
+                              type: string
+                              enum: [all, crossings]
+                              description: Saved scope. crossings = only bridged sends use both radios.
+                            active_scope:
+                              type: string
+                              nullable: true
+                              enum: [all, crossings]
                             members:
                               type: array
                               items:
@@ -265,6 +273,11 @@ paths:
                   items:
                     type: string
                   description: The primary alone, or two distinct radios on its network including the primary, in send order.
+                scope:
+                  type: string
+                  enum: [all, crossings]
+                  default: all
+                  description: all = every send uses the group; crossings = only packets bridged from the other network do.
       responses:
         '200':
           description: Operation result. Check success before using data.

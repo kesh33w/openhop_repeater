@@ -5,7 +5,7 @@ from openhop_core.rf_fabric.topology import NetworkTopology
 from tests.test_fabric_fanout import _Rig, _FakeRadio, _flood
 
 
-def rig(order):
+def rig(order, scope=None):
     r = _Rig()
     rak = _FakeRadio("rak", r.air)
     r.radio.fabric.register_radio(rak, radio_id="rak")
@@ -19,7 +19,11 @@ def rig(order):
     ]
     t = NetworkTopology(
         entries,
-        {"networks": {"SMF": "local", "SFO": "link"}, "tx_groups": {"link": list(order)}},
+        {
+            "networks": {"SMF": "local", "SFO": "link"},
+            "tx_groups": {"link": list(order)},
+            **({"tx_group_scopes": {"link": scope}} if scope else {}),
+        },
         "local",
     )
     r.radio.fabric.configure_topology(t)
@@ -106,3 +110,20 @@ async def test_second_leg_respects_remaining_shared_channel_budget():
     assert await task
     assert r.air.order == ["link"]
     assert pkt._tx_metadata["ordered_tx_results"][1]["metadata"]["reason"] == "duty_cycle_exceeded"
+
+
+@pytest.mark.asyncio
+async def test_crossings_scope_double_transmits_only_bridged_copies():
+    r, rak = rig(("rak", "link"), scope="crossings")
+    # An ordinary repeat on the SFO network goes out once, on the primary.
+    plain = _flood()
+    assert await (await r.handler.schedule_retransmit(plain, 0, 0, preferred_tx_radio_id="link"))
+    assert r.air.order == ["link"]
+    # A bridged copy uses the whole group, in its configured order.
+    bridged = _flood(payload=b"bridged copy")
+    task = await r.handler.schedule_retransmit(
+        bridged, 0, 0, preferred_tx_radio_id="link", crossing=True
+    )
+    assert await task
+    assert r.air.order == ["link", "rak", "link"]
+    assert len(bridged._tx_metadata["ordered_tx_results"]) == 2

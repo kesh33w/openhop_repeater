@@ -1,5 +1,13 @@
-"""Bounded physical-RX observations, independent of forwarding and storage."""
+"""Bounded physical-RX observations, independent of forwarding and storage.
 
+Each distinct wire image is reported once per logical observer. Copies of one
+transmission heard by several ears (a G3 and its RAK) collapse to one report,
+but relayed copies of the same packet arrive with a different path and are
+reported separately, as single-radio observer firmware does. Those path
+variants show which repeaters this site can hear.
+"""
+
+import hashlib
 import queue
 import threading
 import time
@@ -94,18 +102,35 @@ class LogicalObserver:
         if receiver is not None:
             try:
                 for stream_id in self._stream_logical:
-                    self._subscriptions.append(receiver.subscribe(stream_id, self.receive_logical))
+                    self._subscriptions.append(
+                        receiver.subscribe(stream_id, self.receive_logical, updates=True)
+                    )
             except BaseException:
                 self.close()
                 raise
 
     def receive_logical(self, event):
-        """Consume one shared local-RF event without maintaining another dedup cache."""
+        """Consume one shared local-RF event without maintaining another dedup cache.
+
+        The receiver offers the first reception, then every later one. A later
+        reception is reported only when its wire image (path included) differs
+        from every earlier reception of the same packet in the event history.
+        """
         if event.stream_id not in self._stream_logical:
             return True
-        first = event.first
+        obs = event.observation
+        if event.kind != "first":
+            retained = any(o is obs for o in event.observations)
+            repeated = obs.wire_hash == event.first.wire_hash or any(
+                o.wire_hash == obs.wire_hash for o in event.observations if o is not obs
+            )
+            if repeated or not retained:
+                # Unretained history cannot prove novelty; never risk re-reporting.
+                with self._lock:
+                    self._counts["duplicates"] += 1
+                return True
         return self.receive(
-            first.data, first.rssi, first.snr, rx_radio_id=first.radio_id, _logical_event=event
+            obs.data, obs.rssi, obs.snr, rx_radio_id=obs.radio_id, _logical_event=event
         )
 
     def receive(
@@ -137,7 +162,8 @@ class LogicalObserver:
         logical, network = membership
         # RAK has its own independent observer on the same network. Its identity
         # cache must not consume either paired unit's reception opportunity.
-        key = (logical, network, digest)
+        # Keyed by the full wire image so path variants are reported separately.
+        key = (logical, network, hashlib.sha256(bytes(data)).hexdigest())
         with self._lock:
             if self._closed:
                 self._counts["closed_drops"] += 1
@@ -154,7 +180,9 @@ class LogicalObserver:
             # Freeze all physical facts before any routing mutation or worker wait.
             row = dict(
                 timestamp=(
-                    _logical_event.first.at if _logical_event is not None else self.wall_clock()
+                    _logical_event.observation.at
+                    if _logical_event is not None
+                    else self.wall_clock()
                 ),
                 type=packet.get_payload_type(),
                 route=packet.header & 3,

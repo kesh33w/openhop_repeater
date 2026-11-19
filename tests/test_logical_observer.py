@@ -59,16 +59,22 @@ def test_first_source_shadow_observation_and_legacy_projection(tmp_path, first):
         variant.path_len += 1
         worker.receive(variant.write_to(), -20, 10, rx_radio_id=other)
         worker.receive(raw, -85, 2, rx_radio_id="omni910")
+        worker.receive(variant.write_to(), -25, 9, rx_radio_id=first)
+        worker.receive(raw, -82, 3, rx_radio_id=other)
         routing = []
         rig.radio.fabric.set_legacy_rx_callback(lambda *a, **kw: routing.append(a))
         rig.ears["rak"].rx_callback(raw, -90, 1)
-        wait_for(lambda: len(records) == 3)
+        wait_for(lambda: len(records) == 4)
         assert not routing and not rig.air.frames
-        local = next(row for rid, row in records if rid == "local")
+        local_rows = [row for rid, row in records if rid == "local"]
+        # The relayed path variant is its own report; repeat wire images are not.
+        assert [row["raw"] for row in local_rows] == [raw.hex(), variant.write_to().hex()]
+        assert local_rows[1]["rx_radio_id"] == other and local_rows[1]["RSSI"] == "-20"
+        local = local_rows[0]
         assert local["rx_radio_id"] == first and local["RSSI"] == "-80" and local["SNR"] == "4"
         assert local["raw"] == raw.hex() and local["observer_radio_id"] == "local"
         assert local["origin_id"] == "key-local" and "tx_radio_ids" not in local
-        assert worker.snapshot()["duplicates"] == 1
+        assert worker.snapshot()["duplicates"] == 2
         assert (
             MeshCoreToMqttPusher._payload_for_connection(
                 pusher.connections[0], "packets", {"rx_radio_id": "local"}

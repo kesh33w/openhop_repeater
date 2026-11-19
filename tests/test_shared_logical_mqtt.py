@@ -1,6 +1,7 @@
 """MQTT consumes shared logical streams, preserving first physical facts."""
 
 import queue
+import time
 import pytest
 from openhop_core.rf_fabric.logical_receiver import LogicalReceiver
 from repeater.data_acquisition.logical_observer import LogicalObserver
@@ -60,6 +61,36 @@ def test_queue_refusal_retries_original_first_without_duplicate(tmp_path):
         assert records[0][1]["receive_event_id"] == first.event_id
         assert records[0][1]["rx_radio_id"] == "omni909"
         assert records[0][1]["RSSI"] == "-90"
+    finally:
+        worker.close()
+
+
+def test_path_variants_reported_once_each(tmp_path):
+    rig, pusher, records = setup(tmp_path)
+    now = [10.0]
+    receiver = LogicalReceiver(rig.topology, wall_clock=lambda: now[0])
+    worker = LogicalObserver({"local": "909"}, rig.topology, pusher, receiver=receiver)
+    try:
+        raw = packet().write_to()
+        relayed = packet()
+        relayed.path.append(0x42)
+        relayed.path_len += 1
+        relayed = relayed.write_to()
+        receiver.observe(raw, -90, 4, rx_radio_id="local")
+        receiver.observe(raw, -70, 8, rx_radio_id="omni909")  # same transmission
+        now[0] = 11.0
+        receiver.observe(relayed, -60, 9, rx_radio_id="omni909")  # relayed copy
+        receiver.observe(relayed, -65, 7, rx_radio_id="local")  # same relay, other ear
+        wait_for(lambda: len(records) == 2)
+        first, variant = (row for _, row in records)
+        assert first["raw"] == raw.hex() and first["RSSI"] == "-90"
+        assert variant["raw"] == relayed.hex() and variant["RSSI"] == "-60"
+        assert variant["rx_radio_id"] == "omni909"
+        assert variant["receive_event_id"] == first["receive_event_id"]
+        assert variant["timestamp"] != first["timestamp"]
+        assert worker.snapshot()["duplicates"] == 2
+        time.sleep(0.05)
+        assert len(records) == 2
     finally:
         worker.close()
 

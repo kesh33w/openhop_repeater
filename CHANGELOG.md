@@ -4,6 +4,10 @@ Fork-specific changes to OpenHop Repeater. Upstream changes are in upstream's hi
 
 ## [Unreleased]
 
+### Fixed
+
+- **MQTT observers report relayed copies.** Each logical observer published a packet only the first time it was heard, so copies relayed by other repeaters (same packet, different path) were dropped. CoreScope counted roughly a third as many observations as a Heltec observer at the same site, and lost the paths showing which repeaters the site can hear. Each distinct wire image (packet plus path) is now reported once. Identical copies heard by both ears of a pair (G3 and RAK) still collapse to one report.
+
 ### Changed
 
 - **Docs:** examples and diagrams use the radio IDs `g3909` and `g3910` (formerly `host-rf` and `bay`), matching `rak909` and `rak910`.

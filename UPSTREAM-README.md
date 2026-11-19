@@ -7,7 +7,7 @@
 > Relative screenshots and documentation links resolve to the inherited files
 > retained in this repository. Roadmap and contributing guidance below are upstream's.
 > For this fork, use the [fork README](README.md) and the
-> [project hub's pinned reconstruction workflow](https://github.com/kesh33w/kesh-openhop-bridge#reconstruct-and-test).
+> [project hub's pinned reconstruction workflow](https://github.com/kesh33w/hydrahop#reconstruct-and-test).
 
 <!-- Original upstream README begins below. -->
 

@@ -20,7 +20,7 @@ def test_status_labels_preserve_identity_radio_and_full_build(version, short):
     topic, status = p.publish.call_args.args
     assert topic == "status" and p.publish.call_args.kwargs == {"retain": True, "qos": 1}
     assert status["model"] == "OpenHop HydraHop"
-    assert status["firmware_version"] == f"OpenHop {short}"
+    assert status["firmware_version"] == f"HydraHop {short}"
     assert status["client_version"] == f"💧🍴 OpenHop HydraHop v{short}"
     assert status["software_build"] == version
     assert status["origin"] == "observer" and status["origin_id"] == "test-public-identity"

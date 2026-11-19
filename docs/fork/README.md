@@ -181,7 +181,7 @@ MQTT credentials refresh before they expire, and connections retry after a faile
 ### Internet Link (iLink)
 
 `private_island` connects compatible MeshCore Observer firmware (V4.3 TFT/OLED) over TLS for approved routes with 2- or 3-byte paths. It adds to RF and never replaces it.
-- The sidecar and its enrollment server live in [kesh-openhop-bridge](https://github.com/kesh33w/kesh-openhop-bridge). This repo has the integration hooks and the Bridge settings controls (`GET /api/internet_link`, `POST /api/update_internet_link`).
+- The sidecar and its enrollment server live in [hydrahop](https://github.com/kesh33w/hydrahop). This repo has the integration hooks and the Bridge settings controls (`GET /api/internet_link`, `POST /api/update_internet_link`).
 - `private_island.enabled` must be the boolean `true` or `false`.
 - If the link fails, local RF startup continues.
 - Settings are saved off the radio loop while holding the enrollment server's lock, so a peer enrolled at the same moment is never lost.

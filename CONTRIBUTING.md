@@ -1,6 +1,6 @@
 # Contributing to HydraHop
 
-This guide covers the four repositories released together: openhop_repeater (this repo), openhop_core, openHop_RepeaterUI and kesh-openhop-bridge. For upstream OpenHop work, contribute to [openhop-dev](https://github.com/openhop-dev) directly. Questions and bug reports for any of the four go in the [hub's issues](https://github.com/kesh33w/kesh-openhop-bridge/issues).
+This guide covers the four repositories released together: openhop_repeater (this repo), openhop_core, openHop_RepeaterUI and hydrahop. For upstream OpenHop work, contribute to [openhop-dev](https://github.com/openhop-dev) directly. Questions and bug reports for any of the four go in the [hub's issues](https://github.com/kesh33w/hydrahop/issues).
 
 ## Branches
 
@@ -63,19 +63,27 @@ Previously built hashed assets are kept, so a browser tab left open during an up
 
 ## Releases
 
-The four repositories are released together under one tag, `kesh-YYYY.MM.DD`. If there is a second release on the same day, add `.1`, `.2` and so on.
+The four repositories are released together as one **HydraHop** version, using [semantic versioning](https://semver.org/):
+
+| Bump | When | Example |
+|---|---|---|
+| PATCH (1.0.**1**) | Fixes only; safe to deploy without reading the config notes | a sensor read fix |
+| MINOR (1.**1**.0) | New features or settings, all opt-in or backward compatible | the antenna identities setting |
+| MAJOR (**2**.0.0) | Something an operator must change by hand: config format, compatibility with older nodes | renaming a config section |
+
+Every repository gets the same tag, `hydrahop-vX.Y.Z`. The repeater's version (`repeater.__version__`, the observer label and the web UI) comes from that tag through setuptools-scm. Releases up to 19 Nov 2026 used date tags (`kesh-YYYY.MM.DD`); they stay as history.
 
 1. Make sure `kesh/bridge` is green in every repo and the bundled UI is current.
 2. In each repo, move the **Unreleased** changelog entries into a new version section, and merge that through a PR.
-3. Tag core, the web UI and the repeater: `git tag -a kesh-YYYY.MM.DD -m "…"`, then `git push origin kesh-YYYY.MM.DD`.
+3. Tag core, the web UI and the repeater: `git tag -a hydrahop-vX.Y.Z -m "HydraHop X.Y.Z"`, then `git push origin hydrahop-vX.Y.Z`.
 4. In the hub:
    - pin `components.current.json` to those tags' commits;
    - update `docs/upgrade.md`;
    - tag the hub.
 5. Publish a GitHub Release for each tag with that version's changelog section.
 
-Do not use bare version tags such as `1.2.0`. Upstream's Docker publish workflow fires on them.
+Always keep the `hydrahop-` prefix. Bare tags such as `1.2.0` or `v1.2.0` start upstream's Docker publish workflow.
 
 ## Deploying
 
-Deployment is separate from merging, and a person always does it deliberately. Follow the hub's [upgrade guide](https://github.com/kesh33w/kesh-openhop-bridge/blob/kesh/openhop-bridge/docs/upgrade.md). Never copy files into an installed virtualenv: the running code must always match a commit.
+Deployment is separate from merging, and a person always does it deliberately. Follow the hub's [upgrade guide](https://github.com/kesh33w/hydrahop/blob/kesh/openhop-bridge/docs/upgrade.md). Never copy files into an installed virtualenv: the running code must always match a commit.

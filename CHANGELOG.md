@@ -1,8 +1,10 @@
 # Changelog
 
-Fork-specific changes to OpenHop Repeater. Upstream changes are in upstream's history. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Releases are tagged `kesh-YYYY.MM.DD`, and the same tag is used across the repeater, core, web UI and hub repositories.
+Fork-specific changes to OpenHop Repeater. Upstream changes are in upstream's history. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Releases are HydraHop versions (`MAJOR.MINOR.PATCH`), tagged `hydrahop-vX.Y.Z` across the core, repeater, web UI and hub repositories. Releases up to 19 Nov 2026 used date tags (`kesh-YYYY.MM.DD`).
 
 ## [Unreleased]
+
+## [1.0.0] - 2026-11-19
 
 ### Fixed
 
@@ -10,6 +12,9 @@ Fork-specific changes to OpenHop Repeater. Upstream changes are in upstream's hi
 
 ### Changed
 
+- **Versioning**: releases are now HydraHop semantic versions tagged `hydrahop-vX.Y.Z`; this is HydraHop 1.0.0. Date tags (`kesh-YYYY.MM.DD`) stay as history.
+- **Observer `firmware_version`** reads `HydraHop <version>` instead of `OpenHop <version>`, so the fork's version isn't mistaken for an upstream release.
+- **Links** point at the renamed hub, `kesh33w/hydrahop`.
 - **Observer label**: MQTT status now reports `client_version` as `💧🍴 OpenHop HydraHop v<version>` and `model` as `OpenHop HydraHop`, replacing `quad-radio-bridge`. The fork is named HydraHop; README and CONTRIBUTING titles follow.
 
 ## [kesh-2026.11.19] - 2026-11-19

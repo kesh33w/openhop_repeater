@@ -4,6 +4,12 @@ Fork-specific changes to OpenHop Repeater. Upstream changes are in upstream's hi
 
 ## [Unreleased]
 
+## [kesh-2026.11.18.1] - 2026-11-18
+
+### Changed
+
+- **Bundled web UI** rebuilt from openHop_RepeaterUI `358d8ab`. It now includes the Bridge control center, which the Pi has served unmerged since 2026-11-17, and the Radio names editor. The `kesh-2026.11.18` UI lacked both, so upgrading to that release would have removed them from the live dashboard.
+
 ## [kesh-2026.11.18] - 2026-11-18
 
 This is the first tagged fork release. It covers everything since the fork's upstream base, `openhop-dev/openhop_repeater` `dev` at `72266e2` (2026-10-27). Feature details: [docs/fork/README.md](docs/fork/README.md).
@@ -89,5 +95,6 @@ This is the first tagged fork release. It covers everything since the fork's ups
 - Channel keys are never returned by any endpoint, including config export with secrets.
 - Bot receipts compare their HMAC in constant time and fail closed. Secret files are opened with `O_NOFOLLOW` and owner/mode checks.
 
-[Unreleased]: https://github.com/kesh33w/openhop_repeater/compare/kesh-2026.11.18...kesh/bridge
+[Unreleased]: https://github.com/kesh33w/openhop_repeater/compare/kesh-2026.11.18.1...kesh/bridge
+[kesh-2026.11.18.1]: https://github.com/kesh33w/openhop_repeater/compare/kesh-2026.11.18...kesh-2026.11.18.1
 [kesh-2026.11.18]: https://github.com/kesh33w/openhop_repeater/compare/72266e2...kesh-2026.11.18

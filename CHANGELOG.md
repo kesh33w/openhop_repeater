@@ -4,8 +4,11 @@ Fork-specific changes to OpenHop Repeater. Upstream changes are in upstream's hi
 
 ## [Unreleased]
 
+## [kesh-2026.11.18.2] - 2026-11-19
+
 ### Added
 
+- **Bundled web UI** rebuilt from openHop_RepeaterUI `1e88667`, adding the Antenna identities control.
 - **Antenna identity setting**: `GET /api/antenna_identities` and `POST /api/update_antenna_identities` stage Off, Transmitting-antenna or Receiving + transmitting codes for restart. Off keeps the section, so routes learned through aliases still resolve.
 
 ## [kesh-2026.11.18.1] - 2026-11-18
@@ -99,6 +102,7 @@ This is the first tagged fork release. It covers everything since the fork's ups
 - Channel keys are never returned by any endpoint, including config export with secrets.
 - Bot receipts compare their HMAC in constant time and fail closed. Secret files are opened with `O_NOFOLLOW` and owner/mode checks.
 
-[Unreleased]: https://github.com/kesh33w/openhop_repeater/compare/kesh-2026.11.18.1...kesh/bridge
+[Unreleased]: https://github.com/kesh33w/openhop_repeater/compare/kesh-2026.11.18.2...kesh/bridge
+[kesh-2026.11.18.2]: https://github.com/kesh33w/openhop_repeater/compare/kesh-2026.11.18.1...kesh-2026.11.18.2
 [kesh-2026.11.18.1]: https://github.com/kesh33w/openhop_repeater/compare/kesh-2026.11.18...kesh-2026.11.18.1
 [kesh-2026.11.18]: https://github.com/kesh33w/openhop_repeater/compare/72266e2...kesh-2026.11.18

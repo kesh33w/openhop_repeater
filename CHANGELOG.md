@@ -4,6 +4,10 @@ Fork-specific changes to OpenHop Repeater. Upstream changes are in upstream's hi
 
 ## [Unreleased]
 
+### Changed
+
+- **Observer label**: MQTT status now reports `client_version` as `💧🍴 OpenHop HydraHop v<version>` and `model` as `OpenHop HydraHop`, replacing `quad-radio-bridge`. The fork is named HydraHop; README and CONTRIBUTING titles follow.
+
 ## [kesh-2026.11.19] - 2026-11-19
 
 ### Changed

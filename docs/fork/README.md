@@ -127,7 +127,7 @@ Details:
 fabric:
   topology:
     tx_groups:
-      bay: [rak910-shadow, bay]   # primary must be included; at most two radios
+      bay: [rak910, bay]   # primary must be included; at most two radios
 ```
 
 - Each leg goes through the normal TX lock, airtime ledger and duplicate checks.

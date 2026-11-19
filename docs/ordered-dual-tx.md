@@ -13,7 +13,7 @@ fabric:
   topology:
     networks: {SMF: host-rf, SFO: bay}
     tx_groups:
-      bay: [rak910-shadow, bay]
+      bay: [rak910, bay]
 ```
 
 ## Bridged packets only
@@ -26,7 +26,7 @@ To double-transmit only the traffic the bridge carries across, scope the group t
 fabric:
   topology:
     tx_groups:
-      bay: [rak910-shadow, bay]
+      bay: [rak910, bay]
     tx_group_scopes:
       bay: crossings        # default: all
 ```

@@ -190,6 +190,52 @@ paths:
               required:
               - paused
               additionalProperties: false
+  /antenna_identities:
+    get:
+      tags: [Bridge]
+      summary: Read the antenna identity mode
+      description: Saved and running mode of the flood-hop antenna identity aliases. Never returns keys.
+      security:
+      - BearerAuth: []
+      - ApiKeyAuth: []
+      responses:
+        '200':
+          description: Operation result. Check success before using data.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  data:
+                    $ref: '#/components/schemas/AntennaIdentityState'
+  /update_antenna_identities:
+    post:
+      tags: [Bridge]
+      summary: Save the antenna identity mode for restart
+      description: off keeps the section so routes learned through aliases still resolve. tx needs per-transmitter keys. Running RF is never changed; a restart applies it.
+      security:
+      - BearerAuth: []
+      - ApiKeyAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [mode]
+              properties:
+                mode:
+                  type: string
+                  enum: ["off", tx, rx_tx]
+      responses:
+        '200':
+          description: Operation result. Check success before using data.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SuccessResponse'
   /tx_groups:
     get:
       tags: [Bridge]
@@ -6639,6 +6685,21 @@ components:
                     description: Receiving radio id; null for a per-transmitter alias.
                   tx:
                     type: string
+    AntennaIdentityState:
+      type: object
+      properties:
+        saved:
+          type: string
+          enum: ["off", tx, rx_tx]
+        running:
+          type: string
+          nullable: true
+          enum: ["off", tx, rx_tx]
+        restart_required:
+          type: boolean
+        tx_available:
+          type: boolean
+          description: Whether per-transmitter keys exist, which the tx mode needs.
     InternetLinkOptions:
       type: object
       properties:

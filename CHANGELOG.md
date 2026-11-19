@@ -4,6 +4,10 @@ Fork-specific changes to OpenHop Repeater. Upstream changes are in upstream's hi
 
 ## [Unreleased]
 
+### Added
+
+- **Antenna identity setting**: `GET /api/antenna_identities` and `POST /api/update_antenna_identities` stage Off, Transmitting-antenna or Receiving + transmitting codes for restart. Off keeps the section, so routes learned through aliases still resolve.
+
 ## [kesh-2026.11.18.1] - 2026-11-18
 
 ### Changed

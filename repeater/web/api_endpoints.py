@@ -2837,6 +2837,45 @@ class APIEndpoints:
 
     @cherrypy.expose
     @cherrypy.tools.json_out()
+    def antenna_identities(self):
+        """Saved and running antenna identity mode; never returns keys."""
+        self._set_cors_headers()
+        if cherrypy.request.method != "GET":
+            raise cherrypy.HTTPError(405)
+        from .antenna_identity_settings import antenna_identity_view
+        from .bridge_controls import saved_snapshot
+
+        handler = getattr(self.daemon_instance, "repeater_handler", None)
+        return self._success(antenna_identity_view(saved_snapshot(self), handler))
+
+    @cherrypy.expose
+    @cherrypy.tools.json_out()
+    @cherrypy.tools.json_in()
+    def update_antenna_identities(self):
+        """Stage the antenna identity mode for restart. Never alters running RF."""
+        self._require_post()
+        from repeater.config_manager import _CONFIG_WRITE_LOCK
+        from .antenna_identity_settings import antenna_identity_candidate
+        from .bridge_controls import saved_snapshot
+
+        with _CONFIG_WRITE_LOCK:
+            try:
+                updates = antenna_identity_candidate(saved_snapshot(self), cherrypy.request.json)
+                result = self.config_manager.update_and_save(updates, live_update=False)
+            except (ValueError, TypeError, KeyError) as exc:
+                return self._error(str(exc))
+        if not result.get("success"):
+            return self._error("Antenna identity setting could not be saved; nothing changed")
+        return self._success(
+            {
+                "saved": True,
+                "restart_required": True,
+                "message": "Saved for restart. Running antenna identities are unchanged.",
+            }
+        )
+
+    @cherrypy.expose
+    @cherrypy.tools.json_out()
     def bridge_settings(self):
         """Authenticated saved/running configuration with no channel keys."""
         self._set_cors_headers()

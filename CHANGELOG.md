@@ -4,6 +4,10 @@ Fork-specific changes to OpenHop Repeater. Upstream changes are in upstream's hi
 
 ## [Unreleased]
 
+### Added
+
+- **Alias names in MQTT status.** Each observer status message lists the antenna aliases as `hop_aliases` (`key`, `label`, e.g. `BD6E g3910→rak910`), so a map can name alias hops automatically. The SacMesh CoreScope fork reads it from trusted observers.
+
 ## [1.0.3] - 2026-11-19
 
 ### Changed

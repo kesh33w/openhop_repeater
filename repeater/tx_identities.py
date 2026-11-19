@@ -152,6 +152,26 @@ class TxIdentities:
         ]
         return rows
 
+    def status_labels(self):
+        """Every alias key with a short label, for observer status messages.
+
+        Lets a map such as CoreScope name alias hops. Keys are derived from our
+        public key and radio ids (or are configured public keys), so publishing
+        them reveals nothing private. A crossing alias is labelled with the
+        crossing identity's prefix and marked as bridged.
+        """
+        native = self.native[:MIN_ALIAS_WIDTH].hex().upper()
+        crossing = self.crossing[:MIN_ALIAS_WIDTH].hex().upper()
+        entries = [((rx, tx), pair) for (rx, tx), pair in self.pairs.items()]
+        entries += [((None, tx), pair) for tx, pair in self.radios.items()]
+        rows = []
+        for (rx, tx), (key, cross) in entries:
+            route = f"{rx}→{tx}" if rx is not None else f"tx {tx}"
+            rows.append({"key": key.hex(), "label": f"{native} {route}"})
+            if cross != key:
+                rows.append({"key": cross.hex(), "label": f"{crossing} {route} (bridged)"})
+        return rows
+
     def canonical_direct(self, packet):
         """Map our aliases in a direct route back to the native/crossing identity.
 

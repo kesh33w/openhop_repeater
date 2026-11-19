@@ -342,3 +342,37 @@ def test_trace_record_carries_the_ingress_radio_on_a_multi_radio_node():
     """A trace is as much a bridge observation as any other packet."""
     assert _trace_record(rx_radio_id="link")["rx_radio_id"] == "link"
     assert _trace_record()["rx_radio_id"] is None
+
+
+def test_status_carries_hop_aliases_only_when_there_are_some():
+    pusher, captured = _capturing_pusher(_make_config())
+    pusher.publish_status(state="online")
+    assert "hop_aliases" not in json.loads(captured[-1]["payload"])
+
+    rows = [{"key": "6f" * 32, "label": "BD6E g3910→g3910"}]
+    pusher.hop_aliases_provider = lambda: rows
+    pusher.publish_status(state="online")
+    assert json.loads(captured[-1]["payload"])["hop_aliases"] == rows
+
+    def broken():
+        raise RuntimeError("no identities")
+
+    pusher.hop_aliases_provider = broken
+    pusher.publish_status(state="online")
+    assert "hop_aliases" not in json.loads(captured[-1]["payload"])
+
+
+def test_per_radio_status_projection_keeps_hop_aliases():
+    """Each observer identity's status must still name the aliases."""
+    from types import SimpleNamespace
+    from repeater.data_acquisition.mqtt_handler import MeshCoreToMqttPusher
+
+    conn = SimpleNamespace(radio_id="g3910", observer_identity=True, public_key="K", node_name="n")
+    rows = [{"key": "6f" * 32, "label": "BD6E g3910→g3910"}]
+    payload = {
+        "radios": [{"id": "g3910", "radio": "910.525,62.5,7,5"}],
+        "stats": {},
+        "hop_aliases": rows,
+    }
+    projected = MeshCoreToMqttPusher._payload_for_connection(conn, "status", payload)
+    assert projected["hop_aliases"] == rows

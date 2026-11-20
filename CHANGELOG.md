@@ -4,6 +4,10 @@ Fork-specific changes to OpenHop Repeater. Upstream changes are in upstream's hi
 
 ## [Unreleased]
 
+### Fixed
+
+- **`/api/relay_stats` returned a stray `codes` field** for a radio none of whose copies carried a distinct code yet. Only the documented fields are returned.
+
 ## [1.4.0] - 2026-11-20
 
 ### Added

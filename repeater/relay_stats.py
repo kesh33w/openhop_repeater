@@ -165,7 +165,8 @@ def fold_relay_stats(
             for neighbour, leg in heard.items():
                 neighbours[neighbour][leg["radio_id"]] += 1
         for r in radios.values():
-            r["code"] = r.pop("codes").most_common(1)[0][0] if r["codes"] else None
+            codes = r.pop("codes")
+            r["code"] = codes.most_common(1)[0][0] if codes else None
         networks.append(
             {
                 "network": network,

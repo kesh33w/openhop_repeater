@@ -8,8 +8,9 @@ with no extra tracking:
 * packets heard on one network and sent on the other ("bridged"), per direction;
 * packets repeated on the network they were heard on ("local");
 * why heard packets were not sent at all;
-* physical sends per (heard-on radio, sent-on radio) pair, which is exactly what
-  the per-antenna TX identity aliases name on the air.
+* physical sends per (heard-on radio, sent-on radio) pair, with the identity code
+  each pair actually put on the air (the last hop of the stored sent bytes, so a
+  later change of alias settings does not rewrite history).
 
 Counts are packets for the network figures (one row per packet, even when an
 ordered TX group sent it on two antennas) and transmissions for the radio pairs.
@@ -20,7 +21,11 @@ unattributed rather than guessed onto a current radio.
 from __future__ import annotations
 
 import json
+from collections import Counter
 from typing import Dict, Iterable, Optional
+
+from openhop_core.protocol.constants import ROUTE_TYPE_FLOOD, ROUTE_TYPE_TRANSPORT_FLOOD
+from openhop_core.protocol.packet_utils import PathUtils
 
 # Grouped in SQL so a week of traffic comes back as a few rows per bucket.
 # drop_reason only varies for rows that were not sent.
@@ -40,7 +45,43 @@ BRIDGE_EGRESS_QUERY = (
     "GROUP BY p.rx_radio_id, e.radio_id, e.success"
 )
 
+# The bytes actually sent, for the on-air identity code; flood sends only.
+BRIDGE_CODES_QUERY = (
+    "SELECT p.rx_radio_id AS rx_radio_id, e.radio_id AS tx_radio_id, e.raw_packet AS raw "
+    "FROM packet_egress e JOIN packets p ON p.id = e.packet_id "
+    "WHERE e.timestamp >= ? AND e.timestamp <= ? AND e.success = 1 AND e.raw_packet IS NOT NULL"
+)
+
 MAX_REASONS = 8
+MAX_CODES = 3
+
+
+def on_air_code(raw) -> Optional[str]:
+    """Hex of the last path hop of a sent flood packet: the identity we sent it as.
+
+    ``raw`` is stored as hex text (bytes are accepted too). None for direct
+    routes (their path is the route ahead, not a trail) and for anything that
+    does not parse.
+    """
+    if isinstance(raw, str):
+        try:
+            raw = bytes.fromhex(raw)
+        except ValueError:
+            return None
+    if not raw or len(raw) < 2:
+        return None
+    route = raw[0] & 0x03
+    if route not in (ROUTE_TYPE_FLOOD, ROUTE_TYPE_TRANSPORT_FLOOD):
+        return None
+    offset = 5 if route == ROUTE_TYPE_TRANSPORT_FLOOD else 1
+    if len(raw) <= offset:
+        return None
+    size = PathUtils.get_path_hash_size(raw[offset])
+    count = PathUtils.get_path_hash_count(raw[offset])
+    end = offset + 1 + count * size
+    if count == 0 or len(raw) < end:
+        return None
+    return bytes(raw[end - size : end]).hex()
 
 
 def _tx_ids(tx_radio_id, tx_radio_ids) -> list:
@@ -57,17 +98,19 @@ def _tx_ids(tx_radio_id, tx_radio_ids) -> list:
 def fold_bridge_stats(
     packet_rows: Iterable,
     egress_rows: Iterable,
+    code_rows: Iterable = (),
     *,
     networks: Dict[str, str],
     members: Dict[str, str],
     bucket_seconds: int,
-    aliases: Optional[Dict[tuple, dict]] = None,
+    own_code: Optional[str] = None,
 ) -> dict:
     """Fold grouped query rows into the ``/bridge_stats`` payload.
 
     ``networks`` maps network name -> its TX (home) radio, in display order;
-    ``members`` maps every configured radio id -> network name; ``aliases``
-    maps (rx radio, tx radio) -> {"prefix", "crossing_prefix"}.
+    ``members`` maps every configured radio id -> network name; ``code_rows``
+    carry the raw bytes of successful sends; ``own_code`` is this node's own
+    path hash in hex, so its shorter forms (1-byte paths) count as one code.
     """
     names = list(networks)
     per_net = {
@@ -132,6 +175,14 @@ def fold_bridge_stats(
                 per_net[rx_net]["bridged_out"] += n
                 bump(directions[(rx_net, net)], bucket_ts, n)
 
+    codes: Dict[tuple, Counter] = {}
+    for row in code_rows:
+        code = on_air_code(row["raw"])
+        if code is not None and own_code and own_code.lower().startswith(code):
+            code = own_code.lower()
+        if code is not None:
+            codes.setdefault((row["rx_radio_id"], row["tx_radio_id"]), Counter())[code] += 1
+
     pairs = {}
     for row in egress_rows:
         n = int(row["n"])
@@ -144,7 +195,7 @@ def fold_bridge_stats(
         key = (rx, tx)
         pair = pairs.get(key)
         if pair is None:
-            alias = (aliases or {}).get(key) or {}
+            seen = codes.get(key, Counter()).most_common(MAX_CODES)
             pair = pairs[key] = {
                 "rx_radio": rx,
                 "tx_radio": tx,
@@ -153,7 +204,8 @@ def fold_bridge_stats(
                 "bridged": rx_net is not None and rx_net != tx_net,
                 "sent": 0,
                 "failed": 0,
-                "antenna_code": alias.get("prefix"),
+                "antenna_code": seen[0][0] if seen else None,
+                "antenna_codes": [{"code": c, "sends": n} for c, n in seen],
             }
         pair["sent" if row["success"] else "failed"] += n
 

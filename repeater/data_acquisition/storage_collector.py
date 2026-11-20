@@ -768,7 +768,7 @@ class StorageCollector:
 
     def get_bridge_stats(
         self, start_timestamp: float, end_timestamp: float, bucket_seconds: int, **topology
-    ) -> dict:
+    ) -> Optional[dict]:
         return self.sqlite_handler.get_bridge_stats(
             start_timestamp, end_timestamp, bucket_seconds, **topology
         )

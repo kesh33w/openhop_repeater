@@ -27,9 +27,11 @@ classifiers = [
 keywords = ["mesh", "networking", "lora", "repeater", "daemon", "iot"]
 
 
+# Core is pinned to an exact commit so one HydraHop version always installs the
+# same radio code. Bump both lines together (see CONTRIBUTING, "Core pin").
 dependencies = [
-    "openhop_core[hardware] @ git+https://github.com/kesh33w/openhop_core.git@kesh/bridge ; sys_platform == 'linux'",
-    "openhop_core @ git+https://github.com/kesh33w/openhop_core.git@kesh/bridge ; sys_platform != 'linux'",
+    "openhop_core[hardware] @ git+https://github.com/kesh33w/openhop_core.git@5f0ce714387f0a27767a98b07457cc698c3a25d2 ; sys_platform == 'linux'",
+    "openhop_core @ git+https://github.com/kesh33w/openhop_core.git@5f0ce714387f0a27767a98b07457cc698c3a25d2 ; sys_platform != 'linux'",
     "pyyaml>=6.0.0",
     "cherrypy>=18.0.0",
     "paho-mqtt>=1.6.0",

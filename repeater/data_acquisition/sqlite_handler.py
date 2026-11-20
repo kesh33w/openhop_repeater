@@ -3288,13 +3288,16 @@ class SQLiteHandler:
         *,
         networks: dict,
         members: dict,
-        aliases: Optional[dict] = None,
-    ) -> dict:
-        """Bridged and local traffic per topology network; see ``repeater.bridge_stats``."""
+        own_code: Optional[str] = None,
+    ) -> Optional[dict]:
+        """Bridged and local traffic per topology network; see ``repeater.bridge_stats``.
+
+        None when the history cannot be read.
+        """
         from repeater.bridge_stats import (
+            BRIDGE_CODES_QUERY,
             BRIDGE_EGRESS_QUERY,
             BRIDGE_PACKETS_QUERY,
-            empty_bridge_stats,
             fold_bridge_stats,
         )
 
@@ -3306,28 +3309,37 @@ class SQLiteHandler:
                     BRIDGE_PACKETS_QUERY,
                     (bucket_seconds, bucket_seconds, start_timestamp, end_timestamp),
                 ).fetchall()
-                egress_rows = conn.execute(
-                    BRIDGE_EGRESS_QUERY, (start_timestamp, end_timestamp)
-                ).fetchall()
+                window = (start_timestamp, end_timestamp)
+                egress_rows = conn.execute(BRIDGE_EGRESS_QUERY, window).fetchall()
+                code_rows = conn.execute(BRIDGE_CODES_QUERY, window).fetchall()
             return fold_bridge_stats(
                 packet_rows,
                 egress_rows,
+                code_rows,
                 networks=networks,
                 members=members,
                 bucket_seconds=bucket_seconds,
-                aliases=aliases,
+                own_code=own_code,
             )
         except Exception as e:
+            # None, not an empty report: an empty one would read as "no traffic".
             logger.error(f"Failed to get bridge stats: {e}")
-            return empty_bridge_stats(bucket_seconds, configured=True)
+            return None
 
     def get_antenna_stats(
-        self, start_timestamp: float, end_timestamp: float, *, groups: dict, roles: dict
+        self,
+        start_timestamp: float,
+        end_timestamp: float,
+        *,
+        groups: dict,
+        roles: dict,
+        tx_scopes: Optional[dict] = None,
     ) -> Optional[dict]:
         """Per-antenna comparison; see ``repeater.antenna_stats``. None on failure."""
         from repeater import antenna_stats as q
 
         window = (start_timestamp, end_timestamp)
+        radio_ids = [rid for rids in groups.values() for rid in rids]
         try:
             with self._connect() as conn:
                 conn.row_factory = sqlite3.Row
@@ -3342,8 +3354,18 @@ class SQLiteHandler:
                         ("egress", q.EGRESS_QUERY),
                     )
                 }
+                rows["matched"] = (
+                    conn.execute(
+                        q.matched_frames_query(len(radio_ids)),
+                        (q.MATCH_WINDOW_SECONDS, *window, *radio_ids, *radio_ids),
+                    ).fetchall()
+                    if radio_ids
+                    else []
+                )
             hours = max(1, round((end_timestamp - start_timestamp) / 3600))
-            return q.fold_antenna_stats(**rows, groups=groups, roles=roles, hours=hours)
+            return q.fold_antenna_stats(
+                **rows, groups=groups, roles=roles, tx_scopes=tx_scopes, hours=hours
+            )
         except Exception as e:
             logger.error(f"Failed to get antenna stats: {e}")
             return None

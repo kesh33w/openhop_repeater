@@ -14,6 +14,9 @@ from repeater.web.api_endpoints import APIEndpoints
 
 NETWORKS = {"smf909": "g3909", "bay910": "g3910"}
 MEMBERS = {"g3909": "smf909", "rak909": "smf909", "g3910": "bay910", "rak910": "bay910"}
+# Flood packets as stored (hex): two 2-byte hops, the last being the code we sent as.
+SENT_AS_9C5B = "11" + "42" + "aabb9c5b" + "ff"
+SENT_AS_BD6E = "11" + "42" + "aabbbd6e" + "ff"
 
 
 def _store(handler, egress=(), **overrides):
@@ -30,7 +33,10 @@ def _store(handler, egress=(), **overrides):
     handler.store_packet_egress(
         packet_id,
         record["timestamp"],
-        [{"radio_id": rid, "success": ok} for rid, ok in egress],
+        [
+            {"radio_id": e[0], "success": e[1], "raw_packet": e[2] if len(e) > 2 else None}
+            for e in egress
+        ],
     )
 
 
@@ -44,7 +50,16 @@ def db(tmp_path):
         transmitted=True,
         tx_radio_id="g3909",
         tx_radio_ids=["g3909"],
-        egress=[("rak909", True), ("g3909", True)],
+        egress=[("rak909", True, SENT_AS_9C5B), ("g3909", True, SENT_AS_BD6E)],
+    )
+    # Same pair, sent as our own identity on a 1-byte path: the same code as BD6E.
+    _store(
+        handler,
+        rx_radio_id="rak910",
+        transmitted=True,
+        tx_radio_id="g3909",
+        tx_radio_ids=["g3909"],
+        egress=[("g3909", True, "11" + "02" + "aabd" + "ff")],
     )
     # Heard on g3910, sent on both networks; the rak910 leg failed.
     _store(
@@ -89,10 +104,10 @@ def db(tmp_path):
     return handler
 
 
-def _stats(db, aliases=None):
+def _stats(db):
     now = time.time()
     return db.get_bridge_stats(
-        now - 3600, now, 300, networks=NETWORKS, members=MEMBERS, aliases=aliases
+        now - 3600, now, 300, networks=NETWORKS, members=MEMBERS, own_code="BD6E"
     )
 
 
@@ -108,9 +123,9 @@ def test_networks_split_bridged_local_and_not_sent(db):
     )
     assert smf["reasons"] == [{"reason": "Channel bridge echo", "count": 1}]
     assert (bay["heard"], bay["repeated_local"], bay["bridged_out"], bay["not_sent"]) == (
-        2,
+        3,
         1,
-        2,
+        3,
         0,
     )
     assert bay["originated"] == 1
@@ -121,21 +136,23 @@ def test_directions_count_packets_not_antenna_legs(db):
     stats = _stats(db)
     directions = {(d["from"], d["to"]): d for d in stats["directions"]}
 
-    assert directions[("bay910", "smf909")]["packets"] == 2
+    assert directions[("bay910", "smf909")]["packets"] == 3
     assert directions[("smf909", "bay910")]["packets"] == 0
     series = directions[("bay910", "smf909")]["buckets"]
-    assert sum(b["count"] for b in series) == 2
+    assert sum(b["count"] for b in series) == 3
     assert all(b["timestamp"] % 300 == 0 for b in series)
     assert {lo["network"]: lo["packets"] for lo in stats["local"]} == {"smf909": 1, "bay910": 1}
 
 
-def test_radio_pairs_count_physical_sends_with_antenna_codes(db):
-    aliases = {("rak910", "rak909"): {"prefix": "9c5b", "crossing_prefix": "1ff7"}}
-    pairs = {(p["rx_radio"], p["tx_radio"]): p for p in _stats(db, aliases)["radio_pairs"]}
+def test_radio_pairs_count_physical_sends_with_on_air_codes(db):
+    pairs = {(p["rx_radio"], p["tx_radio"]): p for p in _stats(db)["radio_pairs"]}
 
     assert pairs[("rak910", "rak909")]["sent"] == 1
     assert pairs[("rak910", "rak909")]["bridged"] is True
+    # Read from the bytes actually sent, not from today's alias settings.
     assert pairs[("rak910", "rak909")]["antenna_code"] == "9c5b"
+    # Our own identity on 1-byte and 2-byte paths counts as one code.
+    assert pairs[("rak910", "g3909")]["antenna_codes"] == [{"code": "bd6e", "sends": 2}]
     assert (pairs[("g3910", "rak910")]["sent"], pairs[("g3910", "rak910")]["failed"]) == (0, 1)
     assert pairs[("g3910", "rak910")]["bridged"] is False
     assert pairs[("g3910", "rak910")]["antenna_code"] is None
@@ -145,6 +162,39 @@ def test_radio_pairs_count_physical_sends_with_antenna_codes(db):
 def test_retired_radio_ids_are_unattributed(db):
     stats = _stats(db)
     assert stats["unattributed"] == {"packets": 1, "transmissions": 1}
+
+
+@pytest.mark.parametrize(
+    "raw, code",
+    [
+        ("11" + "42" + "aabb9c5b" + "ff", "9c5b"),  # flood, 2-byte hops
+        ("11" + "03" + "0102" + "03" + "ff", "03"),  # flood, 1-byte hops
+        ("10" + "00000000" + "41" + "1234" + "ff", "1234"),  # transport flood
+        ("12" + "41" + "1234" + "ff", None),  # direct: the path is the route ahead
+        ("11" + "00" + "ff", None),  # flood with no hops yet
+        ("11" + "45" + "1234", None),  # truncated
+        ("zz", None),
+        (None, None),
+        (bytes.fromhex("11" + "41" + "beef"), "beef"),
+    ],
+)
+def test_on_air_code(raw, code):
+    from repeater.bridge_stats import on_air_code
+
+    assert on_air_code(raw) == code
+
+
+def test_unreadable_history_is_an_error_not_an_empty_report(tmp_path, monkeypatch):
+    handler = SQLiteHandler(tmp_path)
+
+    def broken():
+        raise RuntimeError("disk I/O error")
+
+    monkeypatch.setattr(handler, "_connect", broken)
+    now = time.time()
+    assert (
+        handler.get_bridge_stats(now - 3600, now, 300, networks=NETWORKS, members=MEMBERS) is None
+    )
 
 
 def test_week_window_uses_indexes(db):
@@ -183,34 +233,37 @@ def _api(handler):
     return api
 
 
-def test_endpoint_passes_topology_and_aliases(cherrypy_ctx):
+def test_endpoint_passes_topology(cherrypy_ctx):
     storage = SimpleNamespace(get_bridge_stats=MagicMock(return_value={"configured": True}))
     topology = SimpleNamespace(
         networks=NETWORKS,
         members={"g3909": ("smf909", "transceiver"), "rak910": ("bay910", "receiver")},
     )
-    identities = SimpleNamespace(
-        table=lambda: [
-            {"prefix": "9c5b", "crossing_prefix": "1ff7", "rx": "rak910", "tx": "rak909"},
-            {"prefix": "8859", "crossing_prefix": "52be", "rx": None, "tx": "rak909"},
-        ]
-    )
     api = _api(
-        SimpleNamespace(storage=storage, network_topology=topology, tx_identities=identities)
+        SimpleNamespace(
+            storage=storage, network_topology=topology, local_hash_bytes=bytes.fromhex("bd6e")
+        )
     )
 
     result = api.bridge_stats(hours="500")
 
     assert result["success"] is True and result["data"]["hours"] == 168
+    assert result["data"]["node_code"] == "bd6e"
     args, kwargs = storage.get_bridge_stats.call_args
     assert args[1] - args[0] == 168 * 3600 and args[2] == 3600
     assert kwargs["members"] == {"g3909": "smf909", "rak910": "bay910"}
-    assert list(kwargs["aliases"]) == [("rak910", "rak909")]
+
+
+def test_endpoint_reports_unreadable_history(cherrypy_ctx):
+    storage = SimpleNamespace(get_bridge_stats=MagicMock(return_value=None))
+    topology = SimpleNamespace(networks=NETWORKS, members={"g3909": ("smf909", "transceiver")})
+    result = _api(SimpleNamespace(storage=storage, network_topology=topology)).bridge_stats()
+    assert result["success"] is False
 
 
 def test_endpoint_without_topology_reports_unconfigured(cherrypy_ctx):
     storage = SimpleNamespace(get_bridge_stats=MagicMock())
-    api = _api(SimpleNamespace(storage=storage, network_topology=None, tx_identities=None))
+    api = _api(SimpleNamespace(storage=storage, network_topology=None))
 
     result = api.bridge_stats(hours="2")
 

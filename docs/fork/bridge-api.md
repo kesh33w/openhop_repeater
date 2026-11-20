@@ -28,8 +28,10 @@ A modem-confirmed TX and an independent observation are different kinds of evide
 
 - `networks[]`: per topology network, non-duplicate packets `heard`, `repeated_local`, `bridged_out`, `not_sent` with the top `reasons`, and `originated`.
 - `directions[]` and `local[]`: bridged packets per direction and local repeats per network, with time `buckets` (5 min up to 6 h, else 1 h).
-- `radio_pairs[]`: physical sends per heard-on and sent-on radio, `sent`/`failed`, with the pair's `antenna_code` when antenna identities are configured.
+- `radio_pairs[]`: physical sends per heard-on and sent-on radio, `sent`/`failed`, with the code the pair actually went out as: `antenna_code` (most used) and `antenna_codes[]` (up to three, with `sends`), read from the last hop of the stored sent bytes of flood sends. `node_code` is this node's own hash, the code used when antenna identities are off; its 1-byte form on 1-byte paths is counted as the same code.
 - `unattributed`: rows from radios that are no longer configured, such as IDs from before a rename.
+
+A database read failure returns `success: false`, never an empty report that would look like no traffic.
 
 Network figures count a packet once even when a TX group sent it on two antennas; radio pairs count each antenna. A packet sent on both networks counts as both local and bridged.
 
@@ -64,7 +66,9 @@ Network figures count a packet once even when a TX group sent it on two antennas
 
 `GET /api/antenna_stats?hours=24` (1–168) compares antennas on the same network, from stored history:
 
-- `radios[]`: packets `received` (duplicates included), `unique_packets` no other antenna on its network heard, average `rssi_avg`/`snr_avg`, `noise` (average, 10th and 90th percentile), `crc_errors` and per hour, `upstream_repeaters` and `unique_upstream_repeaters`, and `sends`, `send_failures`, `busy_holds` and `backoff_avg_ms` from listen-before-talk.
-- `networks[]`: `heard_by[]` counts packets by the set of antennas that heard them, and `signal_gaps[]` gives the average RSSI/SNR of antenna `a` minus antenna `b` for packets both heard.
+- `radios[]`: packets `received` (duplicates and bridge echoes included), `bridge_echoes`, `unique_packets` no other antenna on its network heard, average `rssi_avg`/`snr_avg` (echoes excluded), `noise` (average, 10th and 90th percentile), `crc_errors` and per hour, `upstream_repeaters` and `unique_upstream_repeaters`, and `sends`, `send_failures`, `busy_holds` and `backoff_avg_ms` from listen-before-talk. State flags: `transmits` (`all`, `crossings`, or null when the topology never sends on it), `recorded` (false for shadow radios, whose receptions are not stored) and `has_data` (false when nothing was stored in the window).
+- `networks[]`: two separate questions.
+  - **Coverage:** `heard_by[]` counts distinct packets by the set of antennas that heard them, from any relay.
+  - **Signal:** `signal_gaps[]` gives the average RSSI/SNR of antenna `a` minus antenna `b` over the *same RF frames* only: the same packet from the same relay, heard within `match_window_seconds` (1 s), with `frames` saying how many. Different relays of one packet would compare the relays, not the antennas. RSSI is not calibrated between radio models; SNR is the fairer comparison.
 
-Radios that are no longer configured are left out.
+Bridge echoes (receptions of neighbours repeating a packet this node bridged) are left out of coverage, signal and upstream counts. `topology_source` says whether roles and TX membership came from the running topology or the saved config. Radios that are no longer configured are left out.

@@ -3,6 +3,7 @@ import copy
 import inspect
 import logging
 import math
+import random
 import secrets
 import time
 from collections import OrderedDict, deque
@@ -2650,6 +2651,24 @@ class RepeaterHandler(BaseHandler):
                     callback(pkt)
                     callback_called = True
 
+            topology = getattr(fabric, "topology", None)
+            gap_min, gap_max = (
+                topology.tx_group_gap_ms(primary)
+                if hasattr(topology, "tx_group_gap_ms")
+                else (0.0, 0.0)
+            )
+
+            async def pause(radio_id):
+                # Outside the TX lock: other traffic may use the channel meanwhile,
+                # and the leg re-checks deadline, pause and duty cycle afterwards.
+                # Random within the range (not cryptographic: radio timing jitter).
+                gap = random.uniform(gap_min, gap_max) / 1000.0  # nosec B311
+                if gap > 0:
+                    logger.debug(
+                        "TX group %s: waiting %.0f ms before %s", primary, gap * 1000, radio_id
+                    )
+                    await asyncio.sleep(gap)
+
             async def send_leg(radio_id, pkt):
                 task = await self.schedule_retransmit(
                     pkt,
@@ -2669,7 +2688,13 @@ class RepeaterHandler(BaseHandler):
                     {"expected_frames": variants} if len(set(variants.values())) > 1 else {}
                 )
                 with fabric.ordered_tx_group(primary, **group_options):
-                    await run_ordered_group(targets, packets, send_leg, results=rows)
+                    await run_ordered_group(
+                        targets,
+                        packets,
+                        send_leg,
+                        results=rows,
+                        before_leg=pause if gap_max > 0 else None,
+                    )
             finally:
                 # Preserve partial confirmation even when a caller cancels the
                 # second leg. Cancellation is still propagated to the caller.

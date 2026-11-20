@@ -24,11 +24,14 @@ def config():
                 "role": "transceiver",
                 "radio": {"frequency": 910525000},
             },
-            {"id": "rak", "network": "sfo", "role": "shadow", "radio": {"frequency": 910525000}},
+            {"id": "rak", "network": "sfo", "role": "receiver", "radio": {"frequency": 910525000}},
         ],
         "fabric": {
             "default_radio": "host",
-            "topology": {"networks": {"smf": "host", "sfo": "bay"}},
+            "topology": {
+                "networks": {"smf": "host", "sfo": "bay"},
+                "enable_receiver_forwarding": True,
+            },
         },
     }
 
@@ -119,7 +122,7 @@ def test_api_stages_without_live_updates(monkeypatch):
     result = api.update_tx_group()
     assert result["restart_required"] is True
     assert api.config_manager.update_and_save.call_args.kwargs == {"live_update": False}
-    assert api.config["radios"][2]["role"] == "shadow"
+    assert api.config["radios"][2]["role"] == "receiver"
 
 
 def test_api_failed_save_does_not_claim_success(monkeypatch):
@@ -143,7 +146,7 @@ def test_api_failed_save_does_not_claim_success(monkeypatch):
     )
     result = api.update_tx_group()
     assert "could not be saved" in result["error"]
-    assert api.config["radios"][2]["role"] == "shadow"
+    assert api.config["radios"][2]["role"] == "receiver"
 
 
 def test_scope_round_trips_and_is_dropped_for_single_radio():
@@ -190,3 +193,24 @@ def test_running_scope_change_requires_restart():
     cfg["fabric"]["topology"]["tx_group_scopes"] = {"bay": "crossings"}
     view = tx_group_view(cfg, running)
     assert view["restart_required"] is True
+
+
+def test_shadow_radios_are_not_offered_or_accepted_as_transmitters():
+    cfg = config()
+    cfg["radios"][2]["role"] = "shadow"
+    row = next(r for r in tx_group_view(cfg)["groups"] if r["primary_radio_id"] == "bay")
+    assert [m["id"] for m in row["members"]] == ["bay"]
+    with pytest.raises(ValueError, match="Shadow"):
+        tx_group_candidate(cfg, {"primary_radio_id": "bay", "radio_ids": ["bay", "rak"]}, runtime())
+
+
+def test_gap_is_kept_when_resaving_a_pair_and_dropped_for_a_single_radio():
+    cfg = config()
+    cfg["fabric"]["topology"]["tx_groups"] = {"bay": ["bay", "rak"]}
+    cfg["fabric"]["topology"]["tx_group_gaps_ms"] = {"bay": [300, 1200]}
+    patch = tx_group_candidate(
+        cfg, {"primary_radio_id": "bay", "radio_ids": ["rak", "bay"]}, runtime()
+    )
+    assert patch["fabric"]["topology"]["tx_group_gaps_ms"] == {"bay": [300, 1200]}
+    patch = tx_group_candidate(cfg, {"primary_radio_id": "bay", "radio_ids": ["bay"]}, {})
+    assert "tx_group_gaps_ms" not in patch["fabric"]["topology"]

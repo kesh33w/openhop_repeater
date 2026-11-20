@@ -4,6 +4,14 @@ Fork-specific changes to OpenHop Repeater. Upstream changes are in upstream's hi
 
 ## [Unreleased]
 
+### Added
+
+- **Pause between double-TX sends.** `fabric.topology.tx_group_gaps_ms` (per TX group, `[min, max]` ms) waits a random time before the second radio sends, instead of keying up the instant the first finishes, when neighbours are rebroadcasting the first copy. The pause is outside the TX lock. Default is no pause. See [docs/ordered-dual-tx.md](docs/ordered-dual-tx.md#pause-between-the-two-sends).
+
+### Fixed
+
+- **A shadow radio could be configured as a TX-group transmitter.** Shadow radios are receive-only; the topology now refuses them in `tx_groups` and the send path checks again. The web UI no longer offers them as a second transmitter. `receiver` radios can still be backup transmitters.
+
 ## [1.3.2] - 2026-11-20
 
 ### Fixed

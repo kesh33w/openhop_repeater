@@ -3,11 +3,13 @@
 import asyncio
 
 
-async def run_ordered_group(targets, packets, send_leg, *, results=None):
+async def run_ordered_group(targets, packets, send_leg, *, results=None, before_leg=None):
     """Run each physical leg once in configured order; abort on uncertainty.
 
     A definitely-unsent failure allows the next leg. Cancellation is propagated
     and never starts a later leg. Results distinguish skipped from failed sends.
+    ``before_leg`` (async, optional) is awaited before every leg after the first
+    that will actually be sent: the configured pause between legs.
     """
     results = [] if results is None else results
     uncertain = False
@@ -23,6 +25,8 @@ async def run_ordered_group(targets, packets, send_leg, *, results=None):
             success = False
         else:
             try:
+                if before_leg is not None and results:
+                    await before_leg(radio_id)
                 outcome = await send_leg(radio_id, packet)
                 metadata = dict(getattr(packet, "_tx_metadata", None) or {})
                 uncertain = bool(metadata.get("tx_outcome_uncertain")) or (

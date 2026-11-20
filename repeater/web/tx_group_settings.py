@@ -15,7 +15,8 @@ def tx_group_view(config, active_topology=None):
         members = []
         for entry in config.get("radios") or []:
             rid = canonical_radio_id(entry)
-            if entry.get("network") == network:
+            # Shadow radios are receive-only and cannot join a TX group.
+            if entry.get("network") == network and entry.get("role") != "shadow":
                 members.append({"id": rid, "label": entry.get("name") or rid})
         saved = list(groups.get(primary, [primary]))
         active = (
@@ -87,6 +88,12 @@ def tx_group_candidate(config, update, runtime_radios):
         scopes.pop(primary, None)  # "all" is the default; a single radio has no group
     if not scopes:
         topology.pop("tx_group_scopes")
+    if len(ordered) < 2:
+        # A pause between legs needs two legs; keep it for a two-radio group.
+        gaps = topology.get("tx_group_gaps_ms") or {}
+        gaps.pop(primary, None)
+        if not gaps:
+            topology.pop("tx_group_gaps_ms", None)
     from repeater.network_topology import topology_from_config
 
     topology_from_config(candidate)

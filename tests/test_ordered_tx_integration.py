@@ -2,6 +2,7 @@
 
 import pytest
 from openhop_core.rf_fabric.topology import NetworkTopology
+from repeater.engine import FanoutTxResult, RadioTxResult
 from tests.test_fabric_fanout import _Rig, _FakeRadio, _flood
 
 
@@ -42,6 +43,9 @@ async def test_full_stack_order_and_dedup(order):
     assert r.air.frames[0][1] == r.air.frames[1][1]
     assert not r.air.overlapped
     assert len(pkt._tx_metadata["ordered_tx_results"]) == 2
+    # Every leg is attributed to its own radio (airtime chart, per-radio rates).
+    tx_result = FanoutTxResult([RadioTxResult("link", True, metadata=pkt._tx_metadata)])
+    assert tx_result.successful_radio_ids == list(order)
     # A separate logical invocation cannot create two more physical sends.
     task = await r.handler.schedule_retransmit(_flood(), 0, 0, preferred_tx_radio_id="link")
     assert not await task

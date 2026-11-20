@@ -400,3 +400,39 @@ def test_each_leg_preserves_actual_completion_timestamp(handler):
     with sqlite3.connect(handler.sqlite_path) as conn:
         got = dict(conn.execute("SELECT radio_id,timestamp FROM packet_egress"))
     assert got == {"local": BASE_TS + 1.25, "link": BASE_TS + 2.75, "legacy": BASE_TS}
+
+
+def test_tx_group_legs_count_as_their_own_radios():
+    # A double-TX group reports one result for its primary radio with the legs
+    # nested. tx_radio_ids feeds the airtime chart and per-radio rates, so each
+    # leg must be listed, or the group's other radio shows zero TX.
+    group = RadioTxResult(
+        "g3910",
+        True,
+        metadata={
+            "ordered_tx_results": [
+                {"radio_id": "g3910", "success": True, "metadata": {}},
+                {"radio_id": "rak910", "success": True, "metadata": {}},
+            ]
+        },
+    )
+    result = _fanout(group, RadioTxResult("g3909", True), RadioTxResult("rak909", False))
+    assert result.successful_radio_ids == ["g3910", "rak910", "g3909"]
+    assert result.failed_radio_ids == ["rak909"]
+    assert result.primary is group
+
+
+def test_a_failed_tx_group_leg_is_not_listed_as_sent():
+    group = RadioTxResult(
+        "g3910",
+        True,
+        metadata={
+            "ordered_tx_results": [
+                {"radio_id": "rak910", "success": True, "metadata": {}},
+                {"radio_id": "g3910", "success": False, "metadata": {}},
+            ]
+        },
+    )
+    result = _fanout(group)
+    assert result.successful_radio_ids == ["rak910"]
+    assert result.failed_radio_ids == ["g3910"]

@@ -133,6 +133,8 @@ fabric:
 - Each leg goes through the normal TX lock, airtime ledger and duplicate checks.
 - If the first leg's outcome is uncertain, the remaining legs are not sent.
 - `tx_group_scopes: {g3910: crossings}` limits the group to **bridged packets only**. Packets crossing in from the other network go out on both antennas for extra reach, while ordinary local repeats use the primary alone, so local airtime is unchanged. The default is `all`. See [bridged packets only](../ordered-dual-tx.md#bridged-packets-only).
+- `tx_group_gaps_ms: {g3910: [300, 1200]}` waits a random 300–1200 ms before the second send, so it does not talk over neighbours rebroadcasting the first copy. Config file only; default no pause. See [pause between the two sends](../ordered-dual-tx.md#pause-between-the-two-sends).
+- A `shadow` radio can never be in a TX group.
 - Configure it in the web UI (Bridge settings → Sequential transmitters) or through `POST /api/update_tx_group`. It takes effect after a restart.
 
 Details: [ordered-dual-tx.md](../ordered-dual-tx.md).

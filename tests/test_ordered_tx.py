@@ -70,3 +70,18 @@ async def test_cancel_does_not_start_second():
     with pytest.raises(asyncio.CancelledError):
         await run_ordered_group(["rak", "bay"], packets(), send)
     assert calls == ["rak"]
+
+
+@pytest.mark.asyncio
+async def test_before_leg_runs_only_between_sent_legs():
+    events = []
+
+    async def send(rid, pkt):
+        events.append(("send", rid))
+        return True
+
+    async def before(rid):
+        events.append(("pause", rid))
+
+    await run_ordered_group(["bay", "rak"], packets(), send, before_leg=before)
+    assert events == [("send", "bay"), ("pause", "rak"), ("send", "rak")]

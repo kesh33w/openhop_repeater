@@ -37,11 +37,35 @@ fabric:
 - In the web UI, choose a transmitter pair under **Bridge settings → Sequential transmitters**, then pick **Both transmitters for bridged packets only**. Save, then restart.
 - A scope only applies to a two-radio group. Saving a single transmitter clears it.
 
+## Pause between the two sends
+
+By default the second radio keys up as soon as the first finishes. That is the
+moment neighbours that heard the first copy start their own rebroadcasts, so the
+second copy can talk over them. `tx_group_gaps_ms` adds a pause before the second
+send, picked at random between a minimum and maximum (milliseconds) each time:
+
+```yaml
+fabric:
+  topology:
+    tx_group_gaps_ms:
+      g3909: [300, 1200]      # default: no pause
+```
+
+- Set per TX group; only valid for a group of two radios. Range 0 to 10000 ms.
+- The pause runs outside the TX lock, so other traffic can go out meanwhile. The
+  second leg then re-checks deadline, pause/resume and duty cycle as usual. A bridged
+  copy whose deadline passes during the pause is not sent on the second radio.
+- If the first leg is uncertain or suppressed, there is no pause and no second send.
+- Config file only; takes effect after a restart. Saving the group in the web UI
+  keeps the setting, and saving a single transmitter clears it.
+
 ## Notes
 
-Omit `tx_groups` to retain existing behavior. Receiver/shadow roles remain
-unchanged: membership grants a physical TX only inside an intentional group, not
-independent routing, replies, or forwarding. Both radios must have matching RF
+Omit `tx_groups` to retain existing behavior. A `receiver` in a group keeps its
+receive role: membership grants a physical TX only inside an intentional group, not
+independent routing, replies, or forwarding. `shadow` radios are receive-only and
+can never join a TX group: the topology refuses to load with one in a group, and
+each send checks again. Both radios must have matching RF
 settings. Existing CAD/LBT and power settings are left unchanged. No extra CAD
 check is added by the group; normal per-radio send behavior remains in place.
 CAD may delay a leg, but the next leg still waits for completion; a missing

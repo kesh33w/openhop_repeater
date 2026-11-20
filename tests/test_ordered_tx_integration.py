@@ -6,7 +6,7 @@ from repeater.engine import FanoutTxResult, RadioTxResult
 from tests.test_fabric_fanout import _Rig, _FakeRadio, _flood
 
 
-def rig(order, scope=None):
+def rig(order, scope=None, gap=None):
     r = _Rig()
     rak = _FakeRadio("rak", r.air)
     r.radio.fabric.register_radio(rak, radio_id="rak")
@@ -16,14 +16,16 @@ def rig(order, scope=None):
     entries = [
         {"id": "local", "network": "SMF", "role": "transceiver"},
         {"id": "link", "network": "SFO", "role": "transceiver"},
-        {"id": "rak", "network": "SFO", "role": "shadow"},
+        {"id": "rak", "network": "SFO", "role": "receiver"},
     ]
     t = NetworkTopology(
         entries,
         {
             "networks": {"SMF": "local", "SFO": "link"},
             "tx_groups": {"link": list(order)},
+            "enable_receiver_forwarding": True,
             **({"tx_group_scopes": {"link": scope}} if scope else {}),
+            **({"tx_group_gaps_ms": {"link": gap}} if gap else {}),
         },
         "local",
     )
@@ -131,3 +133,41 @@ async def test_crossings_scope_double_transmits_only_bridged_copies():
     assert await task
     assert r.air.order == ["link", "rak", "link"]
     assert len(bridged._tx_metadata["ordered_tx_results"]) == 2
+
+
+@pytest.mark.asyncio
+async def test_gap_pauses_between_legs_without_holding_the_tx_lock(monkeypatch):
+    import asyncio
+
+    import repeater.engine as engine
+
+    r, rak = rig(("link", "rak"), gap=[300, 1200])
+    monkeypatch.setattr(engine.random, "uniform", lambda lo, hi: (lo + hi) / 2)
+    pauses = []
+    real_sleep = asyncio.sleep
+
+    async def sleep(seconds, *args, **kwargs):
+        if seconds:
+            pauses.append((seconds, r.air.order[:], r.handler._tx_lock.locked()))
+        await real_sleep(0)
+
+    monkeypatch.setattr(engine.asyncio, "sleep", sleep)
+    pkt = _flood()
+    task = await r.handler.schedule_retransmit(pkt, 0, 0, preferred_tx_radio_id="link")
+    assert await task
+    assert r.air.order == ["link", "rak"]
+    # One pause of 750 ms, after the first leg went out, with the TX lock free.
+    assert pauses == [(0.75, ["link"], False)]
+
+
+@pytest.mark.asyncio
+async def test_no_gap_after_a_failed_first_leg_that_stops_the_group(monkeypatch):
+    import repeater.engine as engine
+
+    r, rak = rig(("rak", "link"), gap=[300, 1200])
+    rak.fail = True
+    calls = []
+    monkeypatch.setattr(engine.random, "uniform", lambda lo, hi: calls.append(1) or 0)
+    task = await r.handler.schedule_retransmit(_flood(), 0, 0, preferred_tx_radio_id="link")
+    assert not await task
+    assert calls == []

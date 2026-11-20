@@ -4,6 +4,8 @@ Fork-specific changes to OpenHop Repeater. Upstream changes are in upstream's hi
 
 ## [Unreleased]
 
+## [1.3.1] - 2026-11-20
+
 ### Fixed
 
 - **Antenna signal comparison measured relays, not antennas.** `signal_gaps` now compares only the same RF frame (same packet, same relay, within 1 s) and reports how many `frames` it is based on; previously two different relays of one packet counted as "heard by both" and their best readings were compared. Coverage (`heard_by`) still counts distinct packets.
@@ -11,7 +13,12 @@ Fork-specific changes to OpenHop Repeater. Upstream changes are in upstream's hi
 - **Antenna roles could claim a radio transmits when it does not.** Each radio now reports `transmits` (`all`, `crossings` or null) from the running topology, `recorded` (false for shadow radios, whose receptions are not stored) and `has_data`, so "no data" is distinguishable from zero.
 - **Bridge antenna codes came from today's settings, not the air.** `radio_pairs[].antenna_code` is now read from the stored sent bytes; `antenna_codes[]` lists up to three with counts and `node_code` gives this node's own code.
 - **An unreadable history looked like no bridge traffic.** `/api/bridge_stats` now returns an error instead of an empty report when the database read fails.
-- **Installs could get different core code for the same version.** `openhop_core` is pinned to an exact commit instead of the moving `kesh/bridge` branch.
+- **Installs could get different core code for the same version.** `openhop_core` is pinned to an exact commit instead of the moving `kesh/bridge` branch, in the dependencies and the `hardware` extra.
+- **Bundled web UI** rebuilt from UI 5195f3b (truthful Antennas and Bridge pages).
+
+### Changed
+
+- Core pinned to `hydrahop-v1.3.1` (09edf94).
 
 ## [1.3.0] - 2026-11-20
 

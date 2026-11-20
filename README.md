@@ -45,7 +45,7 @@ The repeater is one of four repositories released together under the same tag. T
 | [openHop_RepeaterUI](https://github.com/kesh33w/openHop_RepeaterUI) | `kesh/bridge` | Vue web UI source. It builds into `repeater/web/html` here. |
 | [hydrahop](https://github.com/kesh33w/hydrahop) | `kesh/openhop-bridge` | Hub: Internet Link sidecar, enrollment, component pins, firmware releases, upgrade guide |
 
-`pyproject.toml` depends on `kesh33w/openhop_core@kesh/bridge`. Upstream core lacks modules this fork imports, such as `rf_fabric.topology`.
+`pyproject.toml` depends on `kesh33w/openhop_core`, pinned to the exact commit of the matching HydraHop release. Upstream core lacks modules this fork imports, such as `rf_fabric.topology`.
 
 ## Install, upgrade and test
 

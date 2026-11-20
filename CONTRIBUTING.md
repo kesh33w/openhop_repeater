@@ -42,7 +42,7 @@ This guide covers the four repositories released together: openhop_repeater (thi
 
 ### Core pin
 
-`pyproject.toml` pins `openhop_core` to an exact commit, never a branch, so every install of a given repeater commit gets the same core. Both dependency lines (with and without `[hardware]`) carry the same SHA; change them together:
+`pyproject.toml` pins `openhop_core` to an exact commit, never a branch, so every install of a given repeater commit gets the same core. Every core line (the two dependencies and the `hardware` extra) carries the same SHA; change them together:
 
 ```sh
 sed -i "s|openhop_core.git@[0-9a-f]\{40\}|openhop_core.git@$(git -C ../openhop_core rev-parse HEAD)|" pyproject.toml

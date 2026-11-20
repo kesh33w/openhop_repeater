@@ -28,55 +28,55 @@ from __future__ import annotations
 from itertools import combinations
 from typing import Dict, Iterable, List, Optional
 
-# Neighbours relaying a packet this node bridged; not mesh traffic for the network.
-ECHO = "IFNULL(drop_reason, '') LIKE 'Channel bridge echo%'"
+# "Channel bridge echo": neighbours relaying a packet this node bridged; not mesh
+# traffic for the network. Written out in each query so every query stays a
+# static string.
 MATCH_WINDOW_SECONDS = 1.0
 
 # Coverage: which radios heard each distinct packet.
 RECEPTION_QUERY = (
     "SELECT DISTINCT packet_hash, rx_radio_id FROM packets "
     "WHERE timestamp >= ? AND timestamp <= ? AND rx_radio_id IS NOT NULL "
-    f"AND packet_hash IS NOT NULL AND NOT {ECHO}"
+    "AND packet_hash IS NOT NULL "
+    "AND IFNULL(drop_reason, '') NOT LIKE 'Channel bridge echo%'"
 )
 
 RADIO_RX_QUERY = (
     "SELECT rx_radio_id, COUNT(*) AS n, SUM(is_duplicate) AS duplicates, "
-    f"SUM({ECHO}) AS echoes, AVG(CASE WHEN {ECHO} THEN NULL ELSE rssi END) AS rssi, "
-    f"AVG(CASE WHEN {ECHO} THEN NULL ELSE snr END) AS snr FROM packets "
+    "SUM(IFNULL(drop_reason, '') LIKE 'Channel bridge echo%') AS echoes, "
+    "AVG(CASE WHEN IFNULL(drop_reason, '') LIKE 'Channel bridge echo%' "
+    "THEN NULL ELSE rssi END) AS rssi, "
+    "AVG(CASE WHEN IFNULL(drop_reason, '') LIKE 'Channel bridge echo%' "
+    "THEN NULL ELSE snr END) AS snr FROM packets "
     "WHERE timestamp >= ? AND timestamp <= ? AND rx_radio_id IS NOT NULL GROUP BY rx_radio_id"
 )
 
 UPSTREAM_QUERY = (
     "SELECT rx_radio_id, upstream_hash, COUNT(*) AS n FROM packets "
     "WHERE timestamp >= ? AND timestamp <= ? AND rx_radio_id IS NOT NULL "
-    f"AND upstream_hash IS NOT NULL AND NOT {ECHO} GROUP BY rx_radio_id, upstream_hash"
+    "AND upstream_hash IS NOT NULL "
+    "AND IFNULL(drop_reason, '') NOT LIKE 'Channel bridge echo%' "
+    "GROUP BY rx_radio_id, upstream_hash"
 )
 
-
-def matched_frames_query(radio_count: int) -> str:
-    """Pairs of receptions of the same RF frame on two radios, summed per radio pair.
-
-    Parameters: match window seconds, start, end, then the radio ids twice.
-    ``idx_packets_hash`` serves the join.
-    """
-    marks = ", ".join("?" * radio_count)
-    echo_a, echo_b = (
-        ECHO.replace("drop_reason", "a.drop_reason"),
-        ECHO.replace("drop_reason", "b.drop_reason"),
-    )
-    return (
-        "SELECT a.rx_radio_id AS a, b.rx_radio_id AS b, COUNT(*) AS n, "
-        "SUM(a.rssi - b.rssi) AS rssi_sum, COUNT(a.rssi - b.rssi) AS rssi_n, "
-        "SUM(a.snr - b.snr) AS snr_sum, COUNT(a.snr - b.snr) AS snr_n "
-        "FROM packets a JOIN packets b ON b.packet_hash = a.packet_hash "
-        "AND b.rx_radio_id > a.rx_radio_id "
-        "AND UPPER(IFNULL(b.upstream_hash, '')) = UPPER(IFNULL(a.upstream_hash, '')) "
-        "AND ABS(b.timestamp - a.timestamp) <= ? "
-        "WHERE a.timestamp >= ? AND a.timestamp <= ? AND a.packet_hash IS NOT NULL "
-        f"AND a.rx_radio_id IN ({marks}) AND b.rx_radio_id IN ({marks}) "
-        f"AND NOT {echo_a} AND NOT {echo_b} "
-        "GROUP BY a.rx_radio_id, b.rx_radio_id"
-    )
+# Pairs of receptions of the same RF frame on two radios, summed per radio pair.
+# Named parameters: window (seconds), start, end, and radios (the configured radio
+# ids as a JSON array). idx_packets_hash serves the join.
+MATCHED_FRAMES_QUERY = (
+    "SELECT a.rx_radio_id AS a, b.rx_radio_id AS b, COUNT(*) AS n, "
+    "SUM(a.rssi - b.rssi) AS rssi_sum, COUNT(a.rssi - b.rssi) AS rssi_n, "
+    "SUM(a.snr - b.snr) AS snr_sum, COUNT(a.snr - b.snr) AS snr_n "
+    "FROM packets a JOIN packets b ON b.packet_hash = a.packet_hash "
+    "AND b.rx_radio_id > a.rx_radio_id "
+    "AND UPPER(IFNULL(b.upstream_hash, '')) = UPPER(IFNULL(a.upstream_hash, '')) "
+    "AND ABS(b.timestamp - a.timestamp) <= :window "
+    "WHERE a.timestamp >= :start AND a.timestamp <= :end AND a.packet_hash IS NOT NULL "
+    "AND a.rx_radio_id IN (SELECT value FROM json_each(:radios)) "
+    "AND b.rx_radio_id IN (SELECT value FROM json_each(:radios)) "
+    "AND IFNULL(a.drop_reason, '') NOT LIKE 'Channel bridge echo%' "
+    "AND IFNULL(b.drop_reason, '') NOT LIKE 'Channel bridge echo%' "
+    "GROUP BY a.rx_radio_id, b.rx_radio_id"
+)
 
 
 NOISE_QUERY = (

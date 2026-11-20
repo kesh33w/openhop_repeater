@@ -3354,14 +3354,15 @@ class SQLiteHandler:
                         ("egress", q.EGRESS_QUERY),
                     )
                 }
-                rows["matched"] = (
-                    conn.execute(
-                        q.matched_frames_query(len(radio_ids)),
-                        (q.MATCH_WINDOW_SECONDS, *window, *radio_ids, *radio_ids),
-                    ).fetchall()
-                    if radio_ids
-                    else []
-                )
+                rows["matched"] = conn.execute(
+                    q.MATCHED_FRAMES_QUERY,
+                    {
+                        "window": q.MATCH_WINDOW_SECONDS,
+                        "start": start_timestamp,
+                        "end": end_timestamp,
+                        "radios": json.dumps(radio_ids),
+                    },
+                ).fetchall()
             hours = max(1, round((end_timestamp - start_timestamp) / 3600))
             return q.fold_antenna_stats(
                 **rows, groups=groups, roles=roles, tx_scopes=tx_scopes, hours=hours

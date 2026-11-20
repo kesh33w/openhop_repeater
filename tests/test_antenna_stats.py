@@ -219,3 +219,12 @@ def test_endpoint_errors(cherrypy_ctx):
     topology = SimpleNamespace(networks={"n": "a"}, members={"a": ("n", "transceiver")})
     result = _api(SimpleNamespace(storage=storage, network_topology=topology)).antenna_stats()
     assert result["success"] is False
+
+
+def test_same_frame_query_uses_indexes(db):
+    from repeater.antenna_stats import MATCHED_FRAMES_QUERY
+
+    params = {"window": 1.0, "start": 0, "end": time.time(), "radios": '["g3909", "rak909"]'}
+    with db._connect() as conn:
+        plan = str(conn.execute("EXPLAIN QUERY PLAN " + MATCHED_FRAMES_QUERY, params).fetchall())
+    assert "idx_packets_hash" in plan and "SCAN a" not in plan

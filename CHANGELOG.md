@@ -4,6 +4,8 @@ Fork-specific changes to OpenHop Repeater. Upstream changes are in upstream's hi
 
 ## [Unreleased]
 
+## [1.3.2] - 2026-11-20
+
 ### Fixed
 
 - **Double-TX radios showed zero transmit airtime.** A TX group (e.g. `g3910`+`rak910`) stored only its primary radio in `packets.tx_radio_ids`, so the dashboard's airtime chart, per-radio packet rates and MQTT `tx_radio_ids` never counted the group's other radio. Every successful leg is now listed. Rows stored before this fix keep the old attribution (the per-leg `packet_egress` rows were always correct).

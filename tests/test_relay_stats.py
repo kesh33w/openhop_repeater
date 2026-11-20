@@ -117,6 +117,23 @@ def test_network_with_no_relays(db):
     assert (bay["double_sent"], bay["tagged"], bay["relayed"], bay["neighbours"]) == (1, 1, 0, [])
 
 
+def test_radio_without_tagged_sends_has_only_the_documented_fields(tmp_path):
+    h = SQLiteHandler(tmp_path)
+    send(h, "06" * 20, [("g3909", "bd6e", True), ("rak909", "bd6e", True)], time.time() - 60)
+    now = time.time()
+    smf = h.get_relay_stats(now - 3600, now, groups=GROUPS)["networks"][0]
+    assert smf["radios"] == [
+        {
+            "radio_id": "g3909",
+            "sent_first": 1,
+            "relayed": 0,
+            "relayed_when_first": 0,
+            "relayed_when_second": 0,
+            "code": None,
+        }
+    ]
+
+
 def test_unreadable_history_is_an_error(tmp_path, monkeypatch):
     h = SQLiteHandler(tmp_path)
 

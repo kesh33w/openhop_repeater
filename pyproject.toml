@@ -31,8 +31,8 @@ keywords = ["mesh", "networking", "lora", "repeater", "daemon", "iot"]
 # same radio code. Bump every core line together, including the hardware extra
 # below (see CONTRIBUTING, "Core pin").
 dependencies = [
-    "openhop_core[hardware] @ git+https://github.com/kesh33w/openhop_core.git@759f8dd0b24530de960f196b7daff230a92b93c2 ; sys_platform == 'linux'",
-    "openhop_core @ git+https://github.com/kesh33w/openhop_core.git@759f8dd0b24530de960f196b7daff230a92b93c2 ; sys_platform != 'linux'",
+    "openhop_core[hardware] @ git+https://github.com/kesh33w/openhop_core.git@fe35c0a90a48b442ce5fa0f9f65dd4fd442e1b03 ; sys_platform == 'linux'",
+    "openhop_core @ git+https://github.com/kesh33w/openhop_core.git@fe35c0a90a48b442ce5fa0f9f65dd4fd442e1b03 ; sys_platform != 'linux'",
     "pyyaml>=6.0.0",
     "cherrypy>=18.0.0",
     "paho-mqtt>=1.6.0",
@@ -48,7 +48,7 @@ dependencies = [
 [project.optional-dependencies]
 # SX1262/SPI support (Linux only; required for Raspberry Pi HATs)
 hardware = [
-    "openhop_core[hardware] @ git+https://github.com/kesh33w/openhop_core.git@759f8dd0b24530de960f196b7daff230a92b93c2",
+    "openhop_core[hardware] @ git+https://github.com/kesh33w/openhop_core.git@fe35c0a90a48b442ce5fa0f9f65dd4fd442e1b03",
 ]
 # RRD metrics (Performance Metrics chart); system librrd required (e.g. apt install rrdtool)
 rrd = [

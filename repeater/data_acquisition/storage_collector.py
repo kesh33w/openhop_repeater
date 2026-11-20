@@ -763,6 +763,13 @@ class StorageCollector:
             start_timestamp, end_timestamp, bucket_seconds, radio_profiles=radio_profiles
         )
 
+    def get_bridge_stats(
+        self, start_timestamp: float, end_timestamp: float, bucket_seconds: int, **topology
+    ) -> dict:
+        return self.sqlite_handler.get_bridge_stats(
+            start_timestamp, end_timestamp, bucket_seconds, **topology
+        )
+
     def get_packet_by_hash(self, packet_hash: str) -> Optional[dict]:
         return self.sqlite_handler.get_packet_by_hash(packet_hash)
 

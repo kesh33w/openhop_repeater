@@ -4,6 +4,10 @@ Fork-specific changes to OpenHop Repeater. Upstream changes are in upstream's hi
 
 ## [Unreleased]
 
+### Added
+
+- **Bridge statistics API.** `GET /api/bridge_stats` reports packets bridged in each direction, local repeats, why heard packets were not sent, and sends per antenna pair, from stored packet history. Drives the web UI's new Bridge page.
+
 ## [1.1.0] - 2026-11-19
 
 ### Added

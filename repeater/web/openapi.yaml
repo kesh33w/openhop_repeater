@@ -4827,6 +4827,39 @@ paths:
               schema:
                 type: object
 
+  /bridge_stats:
+    get:
+      tags: [Bridge]
+      summary: Get bridged and local traffic per network
+      description: >-
+        Packets heard on one topology network and sent on the other, per direction and
+        over time, from stored packet history. Network figures count packets once even
+        when an ordered TX group sent them on two antennas; radio pairs count physical
+        transmissions. Radios no longer configured are reported as unattributed.
+      security:
+      - BearerAuth: []
+      - ApiKeyAuth: []
+      parameters:
+        - name: hours
+          in: query
+          schema:
+            type: integer
+            default: 24
+            minimum: 1
+            maximum: 168
+      responses:
+        '200':
+          description: Bridge statistics
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  data:
+                    $ref: '#/components/schemas/BridgeStats'
+
   /radio_packet_rates:
     get:
       tags: [Charts]
@@ -7030,6 +7063,130 @@ components:
           description: >-
             The radio whose counter these errors came from. Present only on a node
             with two or more radios.
+
+    BridgeStats:
+      type: object
+      required: [configured, hours, bucket_seconds, networks, directions, local, radio_pairs, unattributed]
+      properties:
+        configured:
+          type: boolean
+          description: False when the node has no two-network topology.
+        hours:
+          type: integer
+        bucket_seconds:
+          type: integer
+        networks:
+          type: array
+          items:
+            $ref: '#/components/schemas/BridgeNetworkStats'
+        directions:
+          type: array
+          description: Bridged packets, one entry per direction.
+          items:
+            $ref: '#/components/schemas/BridgeTrafficSeries'
+        local:
+          type: array
+          description: Packets repeated on the network they were heard on.
+          items:
+            $ref: '#/components/schemas/BridgeTrafficSeries'
+        radio_pairs:
+          type: array
+          items:
+            $ref: '#/components/schemas/BridgeRadioPair'
+        unattributed:
+          type: object
+          required: [packets, transmissions]
+          properties:
+            packets:
+              type: integer
+            transmissions:
+              type: integer
+
+    BridgeNetworkStats:
+      type: object
+      required: [network, tx_radio, radios, heard, repeated_local, bridged_out, not_sent, originated, reasons]
+      properties:
+        network:
+          type: string
+        tx_radio:
+          type: string
+        radios:
+          type: array
+          items:
+            type: string
+        heard:
+          type: integer
+          description: Non-duplicate packets heard on this network.
+        repeated_local:
+          type: integer
+        bridged_out:
+          type: integer
+        not_sent:
+          type: integer
+        originated:
+          type: integer
+          description: Packets this node created and sent on this network.
+        reasons:
+          type: array
+          description: Most common reasons heard packets were not sent.
+          items:
+            type: object
+            required: [reason, count]
+            properties:
+              reason:
+                type: string
+              count:
+                type: integer
+
+    BridgeTrafficSeries:
+      type: object
+      required: [packets, buckets]
+      properties:
+        from:
+          type: string
+        to:
+          type: string
+        network:
+          type: string
+        packets:
+          type: integer
+        buckets:
+          type: array
+          description: Non-empty buckets, oldest first.
+          items:
+            type: object
+            required: [timestamp, count]
+            properties:
+              timestamp:
+                type: integer
+              count:
+                type: integer
+
+    BridgeRadioPair:
+      type: object
+      required: [rx_radio, tx_radio, rx_network, tx_network, bridged, sent, failed, antenna_code]
+      properties:
+        rx_radio:
+          type: string
+          nullable: true
+          description: Null for packets this node originated.
+        tx_radio:
+          type: string
+        rx_network:
+          type: string
+          nullable: true
+        tx_network:
+          type: string
+        bridged:
+          type: boolean
+        sent:
+          type: integer
+        failed:
+          type: integer
+        antenna_code:
+          type: string
+          nullable: true
+          description: 2-byte hex prefix of this pair's TX identity alias, when configured.
 
     RadioPacketRateSeries:
       type: object

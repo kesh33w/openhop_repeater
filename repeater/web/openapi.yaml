@@ -4827,6 +4827,39 @@ paths:
               schema:
                 type: object
 
+  /antenna_stats:
+    get:
+      tags: [Charts]
+      summary: Compare antennas on each network
+      description: >-
+        Per radio, from stored history: packets received and the share only that antenna
+        heard, average RSSI/SNR, noise floor, CRC errors, upstream repeaters heard, and
+        sends with listen-before-talk holds. Per network: which combination of antennas
+        heard each packet, and the average signal difference between antennas.
+      security:
+      - BearerAuth: []
+      - ApiKeyAuth: []
+      parameters:
+        - name: hours
+          in: query
+          schema:
+            type: integer
+            default: 24
+            minimum: 1
+            maximum: 168
+      responses:
+        '200':
+          description: Antenna statistics
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  data:
+                    $ref: '#/components/schemas/AntennaStats'
+
   /bridge_stats:
     get:
       tags: [Bridge]
@@ -7063,6 +7096,127 @@ components:
           description: >-
             The radio whose counter these errors came from. Present only on a node
             with two or more radios.
+
+    AntennaStats:
+      type: object
+      required: [hours, radios, networks]
+      properties:
+        hours:
+          type: integer
+        radios:
+          type: array
+          items:
+            $ref: '#/components/schemas/AntennaRadioStats'
+        networks:
+          type: array
+          items:
+            $ref: '#/components/schemas/AntennaNetworkStats'
+
+    AntennaRadioStats:
+      type: object
+      required: [radio_id, network, role, received, duplicates, rssi_avg, snr_avg, unique_packets, noise, crc_errors, crc_errors_per_hour, upstream_repeaters, unique_upstream_repeaters, sends, send_failures, busy_holds, backoff_avg_ms]
+      properties:
+        radio_id:
+          type: string
+        network:
+          type: string
+        role:
+          type: string
+          nullable: true
+        received:
+          type: integer
+          description: Packets received, duplicates included.
+        duplicates:
+          type: integer
+        rssi_avg:
+          type: number
+          nullable: true
+        snr_avg:
+          type: number
+          nullable: true
+        unique_packets:
+          type: integer
+          description: Packets no other antenna on this network heard.
+        noise:
+          type: object
+          required: [avg, p10, p90, samples]
+          properties:
+            avg:
+              type: number
+              nullable: true
+            p10:
+              type: number
+              nullable: true
+            p90:
+              type: number
+              nullable: true
+            samples:
+              type: integer
+        crc_errors:
+          type: integer
+        crc_errors_per_hour:
+          type: number
+        upstream_repeaters:
+          type: integer
+          description: Distinct repeaters this antenna heard relaying packets to us.
+        unique_upstream_repeaters:
+          type: integer
+          description: Upstream repeaters no other antenna on this network heard.
+        sends:
+          type: integer
+        send_failures:
+          type: integer
+        busy_holds:
+          type: integer
+          description: Sends that waited because the channel was busy.
+        backoff_avg_ms:
+          type: number
+          nullable: true
+
+    AntennaNetworkStats:
+      type: object
+      required: [network, radios, packets, heard_by, signal_gaps]
+      properties:
+        network:
+          type: string
+        radios:
+          type: array
+          items:
+            type: string
+        packets:
+          type: integer
+          description: Distinct packets heard by any antenna on this network.
+        heard_by:
+          type: array
+          items:
+            type: object
+            required: [radios, packets]
+            properties:
+              radios:
+                type: array
+                items:
+                  type: string
+              packets:
+                type: integer
+        signal_gaps:
+          type: array
+          description: Average signal of antenna a minus antenna b, for packets both heard.
+          items:
+            type: object
+            required: [a, b, packets, rssi_db, snr_db]
+            properties:
+              a:
+                type: string
+              b:
+                type: string
+              packets:
+                type: integer
+              rssi_db:
+                type: number
+                nullable: true
+              snr_db:
+                type: number
+                nullable: true
 
     BridgeStats:
       type: object

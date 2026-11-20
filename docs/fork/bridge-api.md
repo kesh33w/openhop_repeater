@@ -61,3 +61,10 @@ Network figures count a packet once even when a TX group sent it on two antennas
 |---|---|
 | `GET /api/internet_link` | Status: running, listening, peers with their last inbound frame age, routes and limits. Credentials are never returned. |
 | `POST /api/update_internet_link` | Either `{"enabled": bool}` (service on/off) or limits (`send_timeout`, `max_inflight`, `max_rx_tasks`). Each runtime change is bounded to 20 s; slower changes report `outcome: unknown`. |
+
+`GET /api/antenna_stats?hours=24` (1–168) compares antennas on the same network, from stored history:
+
+- `radios[]`: packets `received` (duplicates included), `unique_packets` no other antenna on its network heard, average `rssi_avg`/`snr_avg`, `noise` (average, 10th and 90th percentile), `crc_errors` and per hour, `upstream_repeaters` and `unique_upstream_repeaters`, and `sends`, `send_failures`, `busy_holds` and `backoff_avg_ms` from listen-before-talk.
+- `networks[]`: `heard_by[]` counts packets by the set of antennas that heard them, and `signal_gaps[]` gives the average RSSI/SNR of antenna `a` minus antenna `b` for packets both heard.
+
+Radios that are no longer configured are left out.

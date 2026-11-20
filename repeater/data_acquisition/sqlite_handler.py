@@ -3321,6 +3321,33 @@ class SQLiteHandler:
             logger.error(f"Failed to get bridge stats: {e}")
             return empty_bridge_stats(bucket_seconds, configured=True)
 
+    def get_antenna_stats(
+        self, start_timestamp: float, end_timestamp: float, *, groups: dict, roles: dict
+    ) -> Optional[dict]:
+        """Per-antenna comparison; see ``repeater.antenna_stats``. None on failure."""
+        from repeater import antenna_stats as q
+
+        window = (start_timestamp, end_timestamp)
+        try:
+            with self._connect() as conn:
+                conn.row_factory = sqlite3.Row
+                rows = {
+                    name: conn.execute(query, window).fetchall()
+                    for name, query in (
+                        ("reception", q.RECEPTION_QUERY),
+                        ("radio_rx", q.RADIO_RX_QUERY),
+                        ("upstream", q.UPSTREAM_QUERY),
+                        ("noise", q.NOISE_QUERY),
+                        ("crc", q.CRC_QUERY),
+                        ("egress", q.EGRESS_QUERY),
+                    )
+                }
+            hours = max(1, round((end_timestamp - start_timestamp) / 3600))
+            return q.fold_antenna_stats(**rows, groups=groups, roles=roles, hours=hours)
+        except Exception as e:
+            logger.error(f"Failed to get antenna stats: {e}")
+            return None
+
     def get_packet_by_hash(self, packet_hash: str) -> Optional[dict]:
         try:
             with self._connect() as conn:

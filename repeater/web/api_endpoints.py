@@ -4596,6 +4596,45 @@ class APIEndpoints:
 
     @cherrypy.expose
     @cherrypy.tools.json_out()
+    def antenna_stats(self, hours=24):
+        """Compare the antennas on each network: reception, signal, noise, CRC and TX holds.
+
+        Read-only and computed from stored history; no packet bytes.
+        """
+        self._set_cors_headers()
+        try:
+            window_hours = max(1, min(int(hours), 168))
+        except (TypeError, ValueError):
+            return self._error("Invalid parameter format: hours must be an integer")
+        try:
+            handler = getattr(getattr(self, "daemon_instance", None), "repeater_handler", None)
+            topology = getattr(handler, "network_topology", None)
+            if topology is None:
+                from repeater.network_topology import topology_from_config
+
+                topology = topology_from_config(self.config)
+            groups, roles = {}, {}
+            if topology is not None:
+                for rid, (network, role) in topology.members.items():
+                    groups.setdefault(network, []).append(rid)
+                    roles[rid] = role
+            else:
+                ids = [p.get("radio_id") for p in self._active_radio_profiles()]
+                ids = [rid for rid in ids if rid] or ["radio0"]
+                groups = {"all": ids}
+            end_ts = time.time()
+            result = self._get_storage().get_antenna_stats(
+                end_ts - window_hours * 3600, end_ts, groups=groups, roles=roles
+            )
+            if result is None:
+                return self._error("Antenna statistics are unavailable")
+            return self._success(result)
+        except Exception as e:
+            logger.error(f"Error getting antenna stats: {e}")
+            return self._error("Antenna statistics are unavailable")
+
+    @cherrypy.expose
+    @cherrypy.tools.json_out()
     def bridge_stats(self, hours=24):
         """Packets bridged between the two topology networks, from stored history.
 

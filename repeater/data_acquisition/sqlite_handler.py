@@ -3280,6 +3280,42 @@ class SQLiteHandler:
             logger.error(f"Failed to get radio packet rates: {e}")
             return empty
 
+    def get_relay_stats(
+        self, start_timestamp: float, end_timestamp: float, *, groups: dict
+    ) -> Optional[dict]:
+        """Which copy of each double-sent packet neighbours relayed; see ``repeater.relay_stats``.
+
+        None when the history cannot be read.
+        """
+        from repeater.relay_stats import (
+            RELAY_GRACE_SECONDS,
+            RELAY_LEGS_QUERY,
+            RELAY_RECEPTIONS_QUERY,
+            double_sends,
+            fold_relay_stats,
+        )
+
+        network_of = {rid: net for net, rids in groups.items() for rid in rids}
+        hours = max(1, round((end_timestamp - start_timestamp) / 3600))
+        try:
+            with self._connect() as conn:
+                conn.row_factory = sqlite3.Row
+                legs = conn.execute(RELAY_LEGS_QUERY, (start_timestamp, end_timestamp)).fetchall()
+                sends = double_sends(legs, network_of)
+                receptions = conn.execute(
+                    RELAY_RECEPTIONS_QUERY,
+                    {
+                        "start": start_timestamp,
+                        "end": end_timestamp + RELAY_GRACE_SECONDS,
+                        "hashes": json.dumps(sorted({s["hash"] for s in sends})),
+                    },
+                ).fetchall()
+            return fold_relay_stats(sends, receptions, groups=groups, hours=hours)
+        except Exception as e:
+            # None, not an empty report: an empty one would read as "no relays".
+            logger.error(f"Failed to get relay stats: {e}")
+            return None
+
     def get_bridge_stats(
         self,
         start_timestamp: float,

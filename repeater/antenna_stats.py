@@ -10,6 +10,17 @@ tables the repeater already writes:
 
 Radios are compared within their topology network (antennas on the same
 frequency). Rows from radios that are no longer configured are ignored.
+
+Two different questions, answered separately:
+
+* **Coverage** counts distinct packets: which antennas heard each message at
+  all, whichever relay they heard it from.
+* **Signal** compares only the *same RF frame*: the same packet from the same
+  relay, heard by both antennas within ``MATCH_WINDOW_SECONDS``. Comparing best
+  readings of different relays would measure the relays, not the antennas.
+
+Both leave out "Channel bridge echo" receptions: neighbours repeating a packet
+this node bridged onto their network. Those are counted per radio instead.
 """
 
 from __future__ import annotations
@@ -17,24 +28,56 @@ from __future__ import annotations
 from itertools import combinations
 from typing import Dict, Iterable, List, Optional
 
-# One row per (packet, radio): the strongest copy that radio heard.
+# "Channel bridge echo": neighbours relaying a packet this node bridged; not mesh
+# traffic for the network. Written out in each query so every query stays a
+# static string.
+MATCH_WINDOW_SECONDS = 1.0
+
+# Coverage: which radios heard each distinct packet.
 RECEPTION_QUERY = (
-    "SELECT packet_hash, rx_radio_id, MAX(rssi) AS rssi, MAX(snr) AS snr FROM packets "
+    "SELECT DISTINCT packet_hash, rx_radio_id FROM packets "
     "WHERE timestamp >= ? AND timestamp <= ? AND rx_radio_id IS NOT NULL "
-    "AND packet_hash IS NOT NULL GROUP BY packet_hash, rx_radio_id"
+    "AND packet_hash IS NOT NULL "
+    "AND IFNULL(drop_reason, '') NOT LIKE 'Channel bridge echo%'"
 )
 
 RADIO_RX_QUERY = (
     "SELECT rx_radio_id, COUNT(*) AS n, SUM(is_duplicate) AS duplicates, "
-    "AVG(rssi) AS rssi, AVG(snr) AS snr FROM packets "
+    "SUM(IFNULL(drop_reason, '') LIKE 'Channel bridge echo%') AS echoes, "
+    "AVG(CASE WHEN IFNULL(drop_reason, '') LIKE 'Channel bridge echo%' "
+    "THEN NULL ELSE rssi END) AS rssi, "
+    "AVG(CASE WHEN IFNULL(drop_reason, '') LIKE 'Channel bridge echo%' "
+    "THEN NULL ELSE snr END) AS snr FROM packets "
     "WHERE timestamp >= ? AND timestamp <= ? AND rx_radio_id IS NOT NULL GROUP BY rx_radio_id"
 )
 
 UPSTREAM_QUERY = (
     "SELECT rx_radio_id, upstream_hash, COUNT(*) AS n FROM packets "
     "WHERE timestamp >= ? AND timestamp <= ? AND rx_radio_id IS NOT NULL "
-    "AND upstream_hash IS NOT NULL GROUP BY rx_radio_id, upstream_hash"
+    "AND upstream_hash IS NOT NULL "
+    "AND IFNULL(drop_reason, '') NOT LIKE 'Channel bridge echo%' "
+    "GROUP BY rx_radio_id, upstream_hash"
 )
+
+# Pairs of receptions of the same RF frame on two radios, summed per radio pair.
+# Named parameters: window (seconds), start, end, and radios (the configured radio
+# ids as a JSON array). idx_packets_hash serves the join.
+MATCHED_FRAMES_QUERY = (
+    "SELECT a.rx_radio_id AS a, b.rx_radio_id AS b, COUNT(*) AS n, "
+    "SUM(a.rssi - b.rssi) AS rssi_sum, COUNT(a.rssi - b.rssi) AS rssi_n, "
+    "SUM(a.snr - b.snr) AS snr_sum, COUNT(a.snr - b.snr) AS snr_n "
+    "FROM packets a JOIN packets b ON b.packet_hash = a.packet_hash "
+    "AND b.rx_radio_id > a.rx_radio_id "
+    "AND UPPER(IFNULL(b.upstream_hash, '')) = UPPER(IFNULL(a.upstream_hash, '')) "
+    "AND ABS(b.timestamp - a.timestamp) <= :window "
+    "WHERE a.timestamp >= :start AND a.timestamp <= :end AND a.packet_hash IS NOT NULL "
+    "AND a.rx_radio_id IN (SELECT value FROM json_each(:radios)) "
+    "AND b.rx_radio_id IN (SELECT value FROM json_each(:radios)) "
+    "AND IFNULL(a.drop_reason, '') NOT LIKE 'Channel bridge echo%' "
+    "AND IFNULL(b.drop_reason, '') NOT LIKE 'Channel bridge echo%' "
+    "GROUP BY a.rx_radio_id, b.rx_radio_id"
+)
+
 
 NOISE_QUERY = (
     "SELECT radio_id, noise_floor_dbm FROM noise_floor "
@@ -73,13 +116,17 @@ def fold_antenna_stats(
     noise: Iterable,
     crc: Iterable,
     egress: Iterable,
+    matched: Iterable = (),
     groups: Dict[str, List[str]],
     roles: Dict[str, Optional[str]],
+    tx_scopes: Optional[Dict[str, Optional[str]]] = None,
     hours: int,
 ) -> dict:
     """Fold query rows into the ``/antenna_stats`` payload.
 
     ``groups`` maps network name -> radio ids on it, in display order.
+    ``tx_scopes`` maps radio id -> "all" or "crossings" for radios the running
+    topology transmits on; None (the whole mapping) means unknown.
     """
     network_of = {rid: net for net, rids in groups.items() for rid in rids}
     radios = {
@@ -87,8 +134,13 @@ def fold_antenna_stats(
             "radio_id": rid,
             "network": network_of[rid],
             "role": roles.get(rid),
+            # Shadow radios are compared live but their receptions are not archived.
+            "recorded": roles.get(rid) != "shadow",
+            "transmits": tx_scopes.get(rid) if tx_scopes is not None else None,
+            "has_data": False,
             "received": 0,
             "duplicates": 0,
+            "bridge_echoes": 0,
             "rssi_avg": None,
             "snr_avg": None,
             "unique_packets": 0,
@@ -110,36 +162,44 @@ def fold_antenna_stats(
         if r:
             r["received"] = int(row["n"])
             r["duplicates"] = int(row["duplicates"] or 0)
+            r["bridge_echoes"] = int(row["echoes"] or 0)
             r["rssi_avg"] = _round(row["rssi"])
             r["snr_avg"] = _round(row["snr"])
 
     # Which radios heard each packet, per network.
-    heard: Dict[str, Dict[str, dict]] = {net: {} for net in groups}
+    heard: Dict[str, Dict[str, set]] = {net: {} for net in groups}
     for row in reception:
         rid = row["rx_radio_id"]
         net = network_of.get(rid)
         if net is None:
             continue
-        heard[net].setdefault(row["packet_hash"], {})[rid] = (row["rssi"], row["snr"])
+        heard[net].setdefault(row["packet_hash"], set()).add(rid)
+
+    # Same-frame signal differences; the query orders each pair by radio id.
+    same_frame = {(row["a"], row["b"]): row for row in matched}
+
+    def gap(a, b):
+        row, sign = same_frame.get((a, b)), 1
+        if row is None and (b, a) in same_frame:
+            row, sign = same_frame[(b, a)], -1
+        if row is None:
+            return {"a": a, "b": b, "frames": 0, "rssi_db": None, "snr_db": None}
+        return {
+            "a": a,
+            "b": b,
+            "frames": int(row["n"]),
+            "rssi_db": _round(sign * row["rssi_sum"] / row["rssi_n"]) if row["rssi_n"] else None,
+            "snr_db": _round(sign * row["snr_sum"] / row["snr_n"]) if row["snr_n"] else None,
+        }
 
     networks = []
     for net, rids in groups.items():
         combos: Dict[tuple, int] = {}
-        gaps = {pair: [0.0, 0.0, 0, 0] for pair in combinations(rids, 2)}
         for copies in heard[net].values():
             key = tuple(rid for rid in rids if rid in copies)
             combos[key] = combos.get(key, 0) + 1
             if len(key) == 1:
                 radios[key[0]]["unique_packets"] += 1
-            for a, b in combinations(key, 2):
-                (ra, sa), (rb, sb) = copies[a], copies[b]
-                gap = gaps[(a, b)]
-                if ra is not None and rb is not None:
-                    gap[0] += ra - rb
-                    gap[2] += 1
-                if sa is not None and sb is not None:
-                    gap[1] += sa - sb
-                    gap[3] += 1
         networks.append(
             {
                 "network": net,
@@ -149,16 +209,7 @@ def fold_antenna_stats(
                     {"radios": list(key), "packets": n}
                     for key, n in sorted(combos.items(), key=lambda kv: (-len(kv[0]), -kv[1]))
                 ],
-                "signal_gaps": [
-                    {
-                        "a": a,
-                        "b": b,
-                        "packets": max(g[2], g[3]),
-                        "rssi_db": _round(g[0] / g[2]) if g[2] else None,
-                        "snr_db": _round(g[1] / g[3]) if g[3] else None,
-                    }
-                    for (a, b), g in gaps.items()
-                ],
+                "signal_gaps": [gap(a, b) for a, b in combinations(rids, 2)],
             }
         )
 
@@ -202,4 +253,13 @@ def fold_antenna_stats(
             r["busy_holds"] = int(row["busy"] or 0)
             r["backoff_avg_ms"] = _round(row["backoff"], 0)
 
-    return {"hours": hours, "radios": list(radios.values()), "networks": networks}
+    for r in radios.values():
+        r["has_data"] = bool(
+            r["received"] or r["sends"] or r["noise"]["samples"] or r["crc_errors"]
+        )
+    return {
+        "hours": hours,
+        "match_window_seconds": MATCH_WINDOW_SECONDS,
+        "radios": list(radios.values()),
+        "networks": networks,
+    }

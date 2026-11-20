@@ -271,6 +271,20 @@ def _serialize_cad_request(method):
     return wrapped
 
 
+def _tx_scopes(topology) -> dict:
+    """Radio id -> "all" or "crossings" for every radio the topology transmits on.
+
+    Each network's TX radio sends everything; extra TX group members send what
+    their group's scope allows. Radios absent from the result never transmit.
+    """
+    scopes = {rid: "all" for rid in topology.networks.values()}
+    group_scopes = getattr(topology, "tx_group_scopes", {})
+    for primary, targets in getattr(topology, "tx_groups", {}).items():
+        for rid in targets:
+            scopes.setdefault(rid, group_scopes.get(primary, "all"))
+    return scopes
+
+
 class APIEndpoints:
     # Serialize both provisioning routes across mounts in this process, from
     # authorization through persistence. Do not reuse ConfigManager's locks:
@@ -4613,22 +4627,30 @@ class APIEndpoints:
                 from repeater.network_topology import topology_from_config
 
                 topology = topology_from_config(self.config)
-            groups, roles = {}, {}
+            groups, roles, tx_scopes = {}, {}, None
             if topology is not None:
                 for rid, (network, role) in topology.members.items():
                     groups.setdefault(network, []).append(rid)
                     roles[rid] = role
+                tx_scopes = _tx_scopes(topology)
             else:
                 ids = [p.get("radio_id") for p in self._active_radio_profiles()]
                 ids = [rid for rid in ids if rid] or ["radio0"]
                 groups = {"all": ids}
             end_ts = time.time()
             result = self._get_storage().get_antenna_stats(
-                end_ts - window_hours * 3600, end_ts, groups=groups, roles=roles
+                end_ts - window_hours * 3600,
+                end_ts,
+                groups=groups,
+                roles=roles,
+                tx_scopes=tx_scopes,
             )
             if result is None:
                 return self._error("Antenna statistics are unavailable")
-            return self._success(result)
+            source = "running" if getattr(handler, "network_topology", None) else "config"
+            return self._success(
+                dict(result, topology_source=source if topology is not None else None)
+            )
         except Exception as e:
             logger.error(f"Error getting antenna stats: {e}")
             return self._error("Antenna statistics are unavailable")
@@ -4658,12 +4680,8 @@ class APIEndpoints:
                 topology = topology_from_config(self.config)
             if topology is None:
                 return self._success(dict(empty_bridge_stats(bucket_s, False), hours=window_hours))
-            identities = getattr(handler, "tx_identities", None)
-            aliases = {
-                (row["rx"], row["tx"]): row
-                for row in (identities.table() if identities else [])
-                if row.get("rx") is not None
-            }
+            local = getattr(handler, "local_hash_bytes", None)
+            node_code = local.hex() if local else None
             end_ts = time.time()
             result = self._get_storage().get_bridge_stats(
                 end_ts - window_hours * 3600,
@@ -4671,9 +4689,11 @@ class APIEndpoints:
                 bucket_s,
                 networks=dict(topology.networks),
                 members={rid: member[0] for rid, member in topology.members.items()},
-                aliases=aliases,
+                own_code=node_code,
             )
-            return self._success(dict(result, hours=window_hours))
+            if result is None:
+                return self._error("Bridge statistics are unavailable")
+            return self._success(dict(result, hours=window_hours, node_code=node_code))
         except Exception as e:
             logger.error(f"Error getting bridge stats: {e}")
             return self._error("Bridge statistics are unavailable")

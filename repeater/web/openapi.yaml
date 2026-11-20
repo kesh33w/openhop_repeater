@@ -7099,10 +7099,18 @@ components:
 
     AntennaStats:
       type: object
-      required: [hours, radios, networks]
+      required: [hours, match_window_seconds, radios, networks]
       properties:
         hours:
           type: integer
+        match_window_seconds:
+          type: number
+          description: Two receptions of the same packet from the same relay this close in time count as one RF frame for signal_gaps.
+        topology_source:
+          type: string
+          nullable: true
+          enum: [running, config, null]
+          description: Where radio roles and TX membership came from; null when the node has no topology.
         radios:
           type: array
           items:
@@ -7114,7 +7122,7 @@ components:
 
     AntennaRadioStats:
       type: object
-      required: [radio_id, network, role, received, duplicates, rssi_avg, snr_avg, unique_packets, noise, crc_errors, crc_errors_per_hour, upstream_repeaters, unique_upstream_repeaters, sends, send_failures, busy_holds, backoff_avg_ms]
+      required: [radio_id, network, role, recorded, transmits, has_data, received, duplicates, bridge_echoes, rssi_avg, snr_avg, unique_packets, noise, crc_errors, crc_errors_per_hour, upstream_repeaters, unique_upstream_repeaters, sends, send_failures, busy_holds, backoff_avg_ms]
       properties:
         radio_id:
           type: string
@@ -7123,17 +7131,33 @@ components:
         role:
           type: string
           nullable: true
+        recorded:
+          type: boolean
+          description: False for shadow radios, whose receptions are not stored; their reception figures are not zero, they are unknown.
+        transmits:
+          type: string
+          nullable: true
+          enum: [all, crossings, null]
+          description: What the topology sends on this radio; null when it never transmits or the topology is unknown.
+        has_data:
+          type: boolean
+          description: False when nothing at all was stored for this radio in the window.
         received:
           type: integer
-          description: Packets received, duplicates included.
+          description: Packets received, duplicates and bridge echoes included.
         duplicates:
           type: integer
+        bridge_echoes:
+          type: integer
+          description: Receptions of neighbours repeating a packet this node bridged; left out of signal averages, coverage and upstream counts.
         rssi_avg:
           type: number
           nullable: true
+          description: Bridge echoes excluded.
         snr_avg:
           type: number
           nullable: true
+          description: Bridge echoes excluded.
         unique_packets:
           type: integer
           description: Packets no other antenna on this network heard.
@@ -7185,7 +7209,7 @@ components:
             type: string
         packets:
           type: integer
-          description: Distinct packets heard by any antenna on this network.
+          description: Distinct packets heard by any antenna on this network, from any relay. Bridge echoes excluded.
         heard_by:
           type: array
           items:
@@ -7200,17 +7224,18 @@ components:
                 type: integer
         signal_gaps:
           type: array
-          description: Average signal of antenna a minus antenna b, for packets both heard.
+          description: Average signal of antenna a minus antenna b over the same RF frames (same packet, same relay, within match_window_seconds). Bridge echoes excluded.
           items:
             type: object
-            required: [a, b, packets, rssi_db, snr_db]
+            required: [a, b, frames, rssi_db, snr_db]
             properties:
               a:
                 type: string
               b:
                 type: string
-              packets:
+              frames:
                 type: integer
+                description: Matched frames the averages are based on.
               rssi_db:
                 type: number
                 nullable: true
@@ -7225,6 +7250,10 @@ components:
         configured:
           type: boolean
           description: False when the node has no two-network topology.
+        node_code:
+          type: string
+          nullable: true
+          description: Hex of this node's own path hash, the code it sends as without antenna identities.
         hours:
           type: integer
         bucket_seconds:
@@ -7318,7 +7347,7 @@ components:
 
     BridgeRadioPair:
       type: object
-      required: [rx_radio, tx_radio, rx_network, tx_network, bridged, sent, failed, antenna_code]
+      required: [rx_radio, tx_radio, rx_network, tx_network, bridged, sent, failed, antenna_code, antenna_codes]
       properties:
         rx_radio:
           type: string
@@ -7340,7 +7369,18 @@ components:
         antenna_code:
           type: string
           nullable: true
-          description: 2-byte hex prefix of this pair's TX identity alias, when configured.
+          description: The code most often on the air for this pair, read from the stored sent bytes (the last path hop of flood sends). This node's own identity is always reported as node_code, also when a 1-byte path carried only its first byte. Null when no flood send was stored.
+        antenna_codes:
+          type: array
+          description: Up to three codes seen on the air for this pair, most used first.
+          items:
+            type: object
+            required: [code, sends]
+            properties:
+              code:
+                type: string
+              sends:
+                type: integer
 
     RadioPacketRateSeries:
       type: object

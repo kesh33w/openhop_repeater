@@ -156,12 +156,39 @@ class FanoutTxResult:
         return bool(self.results) and all(result.success for result in self.results)
 
     @property
+    def physical_results(self) -> list:
+        """Every physical send, with ordered TX-group legs expanded.
+
+        A TX group (double TX) reports as one result for its primary radio and
+        nests each leg under ``metadata["ordered_tx_results"]``. Anything that
+        asks which radios carried the packet must look at the legs, or the
+        group's other radios read as never having transmitted.
+        """
+        expanded = []
+        for result in self.results:
+            legs = (result.metadata or {}).get("ordered_tx_results")
+            if legs:
+                expanded.extend(
+                    RadioTxResult(
+                        row["radio_id"],
+                        row["success"],
+                        metadata=row["metadata"],
+                        raw_packet=row.get("raw_packet"),
+                        failure_reason=row.get("failure_reason"),
+                    )
+                    for row in legs
+                )
+            else:
+                expanded.append(result)
+        return expanded
+
+    @property
     def successful_radio_ids(self) -> list:
-        return [r.radio_id for r in self.results if r.success and r.radio_id]
+        return [r.radio_id for r in self.physical_results if r.success and r.radio_id]
 
     @property
     def failed_radio_ids(self) -> list:
-        return [r.radio_id for r in self.results if not r.success and r.radio_id]
+        return [r.radio_id for r in self.physical_results if not r.success and r.radio_id]
 
     @property
     def primary(self) -> Optional[RadioTxResult]:
@@ -2991,23 +3018,7 @@ class RepeaterHandler(BaseHandler):
             return None
 
         records = []
-        expanded = []
-        for result in tx_result.results:
-            legs = (result.metadata or {}).get("ordered_tx_results")
-            if legs:
-                expanded.extend(
-                    RadioTxResult(
-                        row["radio_id"],
-                        row["success"],
-                        metadata=row["metadata"],
-                        raw_packet=row.get("raw_packet"),
-                        failure_reason=row.get("failure_reason"),
-                    )
-                    for row in legs
-                )
-            else:
-                expanded.append(result)
-        for result in expanded:
+        for result in tx_result.physical_results:
             metadata = result.metadata if isinstance(result.metadata, dict) else {}
             backoffs = metadata.get("lbt_backoff_delays_ms") or []
             failure_reason = result.failure_reason or (

@@ -4596,6 +4596,51 @@ class APIEndpoints:
 
     @cherrypy.expose
     @cherrypy.tools.json_out()
+    def bridge_stats(self, hours=24):
+        """Packets bridged between the two topology networks, from stored history.
+
+        Read-only; no packet bytes. ``configured`` is false on a node without a
+        two-network topology.
+        """
+        from repeater.bridge_stats import empty_bridge_stats
+
+        self._set_cors_headers()
+        try:
+            window_hours = max(1, min(int(hours), 168))
+        except (TypeError, ValueError):
+            return self._error("Invalid parameter format: hours must be an integer")
+        bucket_s = 300 if window_hours <= 6 else 3600
+        try:
+            handler = getattr(getattr(self, "daemon_instance", None), "repeater_handler", None)
+            topology = getattr(handler, "network_topology", None)
+            if topology is None:
+                from repeater.network_topology import topology_from_config
+
+                topology = topology_from_config(self.config)
+            if topology is None:
+                return self._success(dict(empty_bridge_stats(bucket_s, False), hours=window_hours))
+            identities = getattr(handler, "tx_identities", None)
+            aliases = {
+                (row["rx"], row["tx"]): row
+                for row in (identities.table() if identities else [])
+                if row.get("rx") is not None
+            }
+            end_ts = time.time()
+            result = self._get_storage().get_bridge_stats(
+                end_ts - window_hours * 3600,
+                end_ts,
+                bucket_s,
+                networks=dict(topology.networks),
+                members={rid: member[0] for rid, member in topology.members.items()},
+                aliases=aliases,
+            )
+            return self._success(dict(result, hours=window_hours))
+        except Exception as e:
+            logger.error(f"Error getting bridge stats: {e}")
+            return self._error("Bridge statistics are unavailable")
+
+    @cherrypy.expose
+    @cherrypy.tools.json_out()
     def packet_by_hash(self, packet_hash=None):
         try:
             if not packet_hash:

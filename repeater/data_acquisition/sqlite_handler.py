@@ -3280,6 +3280,47 @@ class SQLiteHandler:
             logger.error(f"Failed to get radio packet rates: {e}")
             return empty
 
+    def get_bridge_stats(
+        self,
+        start_timestamp: float,
+        end_timestamp: float,
+        bucket_seconds: int,
+        *,
+        networks: dict,
+        members: dict,
+        aliases: Optional[dict] = None,
+    ) -> dict:
+        """Bridged and local traffic per topology network; see ``repeater.bridge_stats``."""
+        from repeater.bridge_stats import (
+            BRIDGE_EGRESS_QUERY,
+            BRIDGE_PACKETS_QUERY,
+            empty_bridge_stats,
+            fold_bridge_stats,
+        )
+
+        bucket_seconds = max(60, int(bucket_seconds))
+        try:
+            with self._connect() as conn:
+                conn.row_factory = sqlite3.Row
+                packet_rows = conn.execute(
+                    BRIDGE_PACKETS_QUERY,
+                    (bucket_seconds, bucket_seconds, start_timestamp, end_timestamp),
+                ).fetchall()
+                egress_rows = conn.execute(
+                    BRIDGE_EGRESS_QUERY, (start_timestamp, end_timestamp)
+                ).fetchall()
+            return fold_bridge_stats(
+                packet_rows,
+                egress_rows,
+                networks=networks,
+                members=members,
+                bucket_seconds=bucket_seconds,
+                aliases=aliases,
+            )
+        except Exception as e:
+            logger.error(f"Failed to get bridge stats: {e}")
+            return empty_bridge_stats(bucket_seconds, configured=True)
+
     def get_packet_by_hash(self, packet_hash: str) -> Optional[dict]:
         try:
             with self._connect() as conn:

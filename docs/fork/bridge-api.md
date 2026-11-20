@@ -24,6 +24,15 @@ Channel keys are **write-only**: no endpoint returns them, including config expo
 
 A modem-confirmed TX and an independent observation are different kinds of evidence. Neither proves that a person received the message.
 
+`GET /api/bridge_stats?hours=24` (1–168) summarises bridge traffic from the stored packet history, so it survives restarts and needs no extra tracking:
+
+- `networks[]`: per topology network, non-duplicate packets `heard`, `repeated_local`, `bridged_out`, `not_sent` with the top `reasons`, and `originated`.
+- `directions[]` and `local[]`: bridged packets per direction and local repeats per network, with time `buckets` (5 min up to 6 h, else 1 h).
+- `radio_pairs[]`: physical sends per heard-on and sent-on radio, `sent`/`failed`, with the pair's `antenna_code` when antenna identities are configured.
+- `unattributed`: rows from radios that are no longer configured, such as IDs from before a rename.
+
+Network figures count a packet once even when a TX group sent it on two antennas; radio pairs count each antenna. A packet sent on both networks counts as both local and bridged.
+
 ## Ordered TX groups
 
 | Endpoint | Purpose |

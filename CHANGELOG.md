@@ -4,9 +4,12 @@ Fork-specific changes to OpenHop Repeater. Upstream changes are in upstream's hi
 
 ## [Unreleased]
 
+## [1.3.0] - 2026-11-20
+
 ### Added
 
 - **Antenna statistics API.** `GET /api/antenna_stats` compares the antennas on each network from stored history: which antennas heard each packet, packets only one antenna heard, average signal difference, noise floor, CRC errors, upstream repeaters heard (and only heard by one antenna), and sends with channel-busy holds. Drives the web UI's new Antennas page.
+- **Antennas page in the bundled web UI** (Analytics → Antennas), rebuilt from UI 2e489f9.
 
 ## [1.2.0] - 2026-11-20
 

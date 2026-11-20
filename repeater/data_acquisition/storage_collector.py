@@ -766,6 +766,9 @@ class StorageCollector:
     def get_antenna_stats(self, start_timestamp: float, end_timestamp: float, **radios):
         return self.sqlite_handler.get_antenna_stats(start_timestamp, end_timestamp, **radios)
 
+    def get_relay_stats(self, start_timestamp: float, end_timestamp: float, **topology):
+        return self.sqlite_handler.get_relay_stats(start_timestamp, end_timestamp, **topology)
+
     def get_bridge_stats(
         self, start_timestamp: float, end_timestamp: float, bucket_seconds: int, **topology
     ) -> Optional[dict]:

@@ -89,11 +89,12 @@ def tx_group_candidate(config, update, runtime_radios):
     if not scopes:
         topology.pop("tx_group_scopes")
     if len(ordered) < 2:
-        # A pause between legs needs two legs; keep it for a two-radio group.
-        gaps = topology.get("tx_group_gaps_ms") or {}
-        gaps.pop(primary, None)
-        if not gaps:
-            topology.pop("tx_group_gaps_ms", None)
+        # Pause and order settings need two legs; keep them for a two-radio group.
+        for key in ("tx_group_gaps_ms", "tx_group_orders"):
+            per_group = topology.get(key) or {}
+            per_group.pop(primary, None)
+            if not per_group:
+                topology.pop(key, None)
     from repeater.network_topology import topology_from_config
 
     topology_from_config(candidate)

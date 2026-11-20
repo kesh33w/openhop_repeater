@@ -59,6 +59,21 @@ fabric:
 - Config file only; takes effect after a restart. Saving the group in the web UI
   keeps the setting, and saving a single transmitter clears it.
 
+## Random order
+
+```yaml
+fabric:
+  topology:
+    tx_group_orders:
+      g3909: random           # default: fixed (the order in tx_groups)
+```
+
+With `random`, the two radios swap order at random for every send, so each goes
+first about half the time. Use it with per-radio identity codes to compare which
+copy neighbours relay (`GET /api/relay_stats`, Analytics → Antennas): with a fixed
+order, the first radio would win most relays just for going first. Config file
+only; takes effect after a restart; saving a single transmitter clears it.
+
 ## Notes
 
 Omit `tx_groups` to retain existing behavior. A `receiver` in a group keeps its

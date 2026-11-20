@@ -4657,6 +4657,51 @@ class APIEndpoints:
 
     @cherrypy.expose
     @cherrypy.tools.json_out()
+    def relay_stats(self, hours=24):
+        """Which copy of each double-sent packet neighbours relayed, per network.
+
+        Read-only and computed from stored history; needs per-radio identity codes
+        to tell the copies apart. ``configured`` is false without a topology.
+        """
+        self._set_cors_headers()
+        try:
+            window_hours = max(1, min(int(hours), 168))
+        except (TypeError, ValueError):
+            return self._error("Invalid parameter format: hours must be an integer")
+        try:
+            handler = getattr(getattr(self, "daemon_instance", None), "repeater_handler", None)
+            topology = getattr(handler, "network_topology", None)
+            if topology is None:
+                return self._success({"configured": False, "hours": window_hours, "networks": []})
+            groups = {}
+            for rid, (network, _role) in topology.members.items():
+                groups.setdefault(network, []).append(rid)
+            identities = getattr(handler, "tx_identities", None)
+            end_ts = time.time()
+            result = self._get_storage().get_relay_stats(
+                end_ts - window_hours * 3600, end_ts, groups=groups
+            )
+            if result is None:
+                return self._error("Relay statistics are unavailable")
+            orders = getattr(topology, "tx_group_orders", {})
+            return self._success(
+                dict(
+                    result,
+                    configured=True,
+                    identity_codes=bool(getattr(identities, "enabled", False)),
+                    identity_mode=getattr(identities, "mode", None) if identities else None,
+                    random_order={
+                        topology.network(primary): orders.get(primary) == "random"
+                        for primary in getattr(topology, "tx_groups", {})
+                    },
+                )
+            )
+        except Exception as e:
+            logger.error(f"Error getting relay stats: {e}")
+            return self._error("Relay statistics are unavailable")
+
+    @cherrypy.expose
+    @cherrypy.tools.json_out()
     def bridge_stats(self, hours=24):
         """Packets bridged between the two topology networks, from stored history.
 

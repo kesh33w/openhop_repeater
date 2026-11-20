@@ -2629,6 +2629,11 @@ class RepeaterHandler(BaseHandler):
         """
         from repeater.ordered_tx import run_ordered_group
 
+        fabric, _ = self._fabric_endpoints()
+        topology = getattr(fabric, "topology", None)
+        if hasattr(topology, "tx_group_order") and topology.tx_group_order(primary) == "random":
+            # Each radio goes first about half the time (not cryptographic).
+            targets = tuple(random.sample(tuple(targets), len(targets)))  # nosec B311
         self._freeze_tx_normalisation(packet)
         # Copy BEFORE dispatch; driver metadata and path processing from the first
         # leg cannot change what the second leg puts on air.
@@ -2638,7 +2643,6 @@ class RepeaterHandler(BaseHandler):
             for radio_id, leg_packet in zip(targets, packets):
                 if identities.tag(leg_packet, radio_id):
                     logger.info("TX identity leg=%s path=%s", radio_id, leg_packet.path.hex())
-        fabric, _ = self._fabric_endpoints()
 
         async def run():
             await asyncio.sleep(delay)
@@ -2651,7 +2655,6 @@ class RepeaterHandler(BaseHandler):
                     callback(pkt)
                     callback_called = True
 
-            topology = getattr(fabric, "topology", None)
             gap_min, gap_max = (
                 topology.tx_group_gap_ms(primary)
                 if hasattr(topology, "tx_group_gap_ms")

@@ -4860,6 +4860,40 @@ paths:
                   data:
                     $ref: '#/components/schemas/AntennaStats'
 
+  /relay_stats:
+    get:
+      tags: [Charts]
+      summary: Which copy of each double-sent packet neighbours relayed
+      description: >-
+        For packets a TX group sent through two radios, which radio's copy each
+        neighbour relayed (read from the identity code in front of the neighbour's hop
+        in relays heard back) and whether that copy went first or second. Needs
+        per-radio identity codes; packets whose copies are identical are counted as
+        untagged.
+      security:
+      - BearerAuth: []
+      - ApiKeyAuth: []
+      parameters:
+        - name: hours
+          in: query
+          schema:
+            type: integer
+            default: 24
+            minimum: 1
+            maximum: 168
+      responses:
+        '200':
+          description: Relay attribution
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  data:
+                    $ref: '#/components/schemas/RelayStats'
+
   /bridge_stats:
     get:
       tags: [Bridge]
@@ -7096,6 +7130,95 @@ components:
           description: >-
             The radio whose counter these errors came from. Present only on a node
             with two or more radios.
+
+    RelayStats:
+      type: object
+      required: [hours, configured, networks]
+      properties:
+        hours:
+          type: integer
+        configured:
+          type: boolean
+          description: False on a node without a two-network topology.
+        identity_codes:
+          type: boolean
+          description: Whether per-radio identity codes are on; without them copies cannot be told apart.
+        identity_mode:
+          type: string
+          nullable: true
+          description: rx_tx or tx.
+        random_order:
+          type: object
+          additionalProperties:
+            type: boolean
+          description: Per network, whether its TX group shuffles which radio sends first.
+        networks:
+          type: array
+          items:
+            $ref: '#/components/schemas/RelayNetworkStats'
+
+    RelayNetworkStats:
+      type: object
+      required: [network, radios, double_sent, tagged, untagged, relayed, neighbours]
+      properties:
+        network:
+          type: string
+        double_sent:
+          type: integer
+          description: Packets sent by two radios of this network.
+        tagged:
+          type: integer
+          description: Double sends whose copies carried different identity codes.
+        untagged:
+          type: integer
+          description: Double sends with identical copies (codes off, 1-byte paths or direct routes).
+        relayed:
+          type: integer
+          description: Tagged double sends at least one neighbour was heard relaying.
+        radios:
+          type: array
+          items:
+            $ref: '#/components/schemas/RelayRadioStats'
+        neighbours:
+          type: array
+          description: Up to 25 neighbours, most relays first.
+          items:
+            $ref: '#/components/schemas/RelayNeighbour'
+
+    RelayRadioStats:
+      type: object
+      required: [radio_id, code, sent_first, relayed, relayed_when_first, relayed_when_second]
+      properties:
+        radio_id:
+          type: string
+        code:
+          type: string
+          nullable: true
+          description: The identity code this radio's copies carried (most common).
+        sent_first:
+          type: integer
+        relayed:
+          type: integer
+          description: Tagged packets where a neighbour relayed this radio's copy.
+        relayed_when_first:
+          type: integer
+        relayed_when_second:
+          type: integer
+
+    RelayNeighbour:
+      type: object
+      required: [neighbour, relays, by_radio]
+      properties:
+        neighbour:
+          type: string
+          description: The neighbour's path hash (hex) as it appears after our code.
+        relays:
+          type: integer
+        by_radio:
+          type: object
+          additionalProperties:
+            type: integer
+          description: Relays per radio whose copy the neighbour relayed.
 
     AntennaStats:
       type: object

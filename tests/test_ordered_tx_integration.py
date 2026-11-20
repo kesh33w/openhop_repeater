@@ -6,7 +6,7 @@ from repeater.engine import FanoutTxResult, RadioTxResult
 from tests.test_fabric_fanout import _Rig, _FakeRadio, _flood
 
 
-def rig(order, scope=None, gap=None):
+def rig(order, scope=None, gap=None, random_order=False):
     r = _Rig()
     rak = _FakeRadio("rak", r.air)
     r.radio.fabric.register_radio(rak, radio_id="rak")
@@ -26,6 +26,7 @@ def rig(order, scope=None, gap=None):
             "enable_receiver_forwarding": True,
             **({"tx_group_scopes": {"link": scope}} if scope else {}),
             **({"tx_group_gaps_ms": {"link": gap}} if gap else {}),
+            **({"tx_group_orders": {"link": "random"}} if random_order else {}),
         },
         "local",
     )
@@ -171,3 +172,33 @@ async def test_no_gap_after_a_failed_first_leg_that_stops_the_group(monkeypatch)
     task = await r.handler.schedule_retransmit(_flood(), 0, 0, preferred_tx_radio_id="link")
     assert not await task
     assert calls == []
+
+
+@pytest.mark.asyncio
+async def test_random_order_lets_either_radio_go_first(monkeypatch):
+    import repeater.engine as engine
+
+    orders = []
+    for flip in (False, True):
+        r, rak = rig(("link", "rak"), random_order=True)
+        monkeypatch.setattr(
+            engine.random,
+            "sample",
+            lambda seq, k, flip=flip: list(reversed(seq)) if flip else list(seq),
+        )
+        pkt = _flood(payload=b"random %d" % flip)
+        assert await (await r.handler.schedule_retransmit(pkt, 0, 0, preferred_tx_radio_id="link"))
+        orders.append(r.air.order[:])
+        # Stored legs follow the order actually sent.
+        assert [x["radio_id"] for x in pkt._tx_metadata["ordered_tx_results"]] == r.air.order
+    assert orders == [["link", "rak"], ["rak", "link"]]
+
+
+@pytest.mark.asyncio
+async def test_fixed_order_never_shuffles(monkeypatch):
+    import repeater.engine as engine
+
+    r, rak = rig(("rak", "link"))
+    monkeypatch.setattr(engine.random, "sample", lambda *a: pytest.fail("shuffled"))
+    assert await (await r.handler.schedule_retransmit(_flood(), 0, 0, preferred_tx_radio_id="link"))
+    assert r.air.order == ["rak", "link"]

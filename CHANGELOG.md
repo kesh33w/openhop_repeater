@@ -4,6 +4,11 @@ Fork-specific changes to OpenHop Repeater. Upstream changes are in upstream's hi
 
 ## [Unreleased]
 
+### Added
+
+- **Which copy did neighbours relay?** `GET /api/relay_stats` matches the relays this node hears back against the identity code on each copy of a double-sent packet, per neighbour, radio and send position (first or second). Needs per-radio identity codes; identical copies are counted as untagged. See [docs/fork/bridge-api.md](docs/fork/bridge-api.md).
+- **Random double-TX order.** `fabric.topology.tx_group_orders: {primary: random}` shuffles which radio sends first for every send, so the relay comparison is fair. Default `fixed`. Saving a single transmitter clears it.
+
 ## [1.3.3] - 2026-11-20
 
 ### Added

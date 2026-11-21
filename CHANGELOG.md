@@ -4,6 +4,8 @@ Fork-specific changes to OpenHop Repeater. Upstream changes are in upstream's hi
 
 ## [Unreleased]
 
+## [1.4.2] - 2026-11-21
+
 ### Fixed
 
 - **One-byte codes were retired by relays far away.** Adverts flood in from across the state, so on the Pi three of four codes were retired at startup by repeaters 5 to 9 hops away. Only a repeater or room heard within 2 hops now retires a code: anything further cannot hear packets addressed to this node. The startup check reads hop counts from stored advert packets.

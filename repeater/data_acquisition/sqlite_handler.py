@@ -2902,6 +2902,38 @@ class SQLiteHandler:
             logger.error(f"Failed to get SQLite metrics data: {e}", exc_info=True)
             raise
 
+    def get_relay_advert_hops(self, since: float) -> dict:
+        """Adverts stored since ``since``: {pubkey hex: (contact type id, fewest hops)}.
+
+        Read from the raw packets, since the adverts table keeps no hop count.
+        Unparseable rows are skipped.
+        """
+        from openhop_core.protocol import Packet
+        from openhop_core.protocol.constants import PAYLOAD_TYPE_ADVERT
+
+        result = {}
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT raw_packet FROM packets WHERE type = ? AND timestamp >= ? "
+                "AND raw_packet IS NOT NULL",
+                (PAYLOAD_TYPE_ADVERT, since),
+            ).fetchall()
+        for (raw,) in rows:
+            try:
+                packet = Packet()
+                packet.read_from(bytes.fromhex(raw))
+                payload = bytes(packet.payload)
+                hops = packet.get_path_hash_count() if packet.is_route_flood() else 0
+            except Exception as exc:  # noqa: BLE001 - one bad row must not hide the rest
+                logger.debug("Skipping unreadable stored advert: %s", exc)
+                payload = b""
+            if len(payload) < 101:
+                continue
+            pubkey, kind = payload[:32].hex(), payload[100] & 0x0F
+            if pubkey not in result or hops < result[pubkey][1]:
+                result[pubkey] = (kind, hops)
+        return result
+
     def get_recent_packets(self, limit: int = 100) -> list:
         try:
             with self._connect() as conn:

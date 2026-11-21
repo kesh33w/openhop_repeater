@@ -360,20 +360,50 @@ def test_one_byte_codes_work_alongside_rx_tx_pair_aliases():
     assert p.path[-1:] == b"\xd4"
 
 
-def test_stored_relay_adverts_retire_codes_at_startup():
+def advert_raw(pubkey_hex, kind, hops):
+    """A flood advert as stored in packets.raw_packet (1-byte hops)."""
+    payload = bytes.fromhex(pubkey_hex) + b"\x00" * 68 + bytes([0x80 | kind]) + b"name"
+    return (bytes([0x11, hops]) + bytes(range(1, hops + 1)) + payload).hex()
+
+
+def test_far_relays_do_not_retire_codes():
+    ids = one_byte_identities()
+    assert not ids.note_advert("d4" + "00" * 31, 2, "far away", hops=5)
+    assert ids.note_advert("d4" + "00" * 31, 2, "neighbour of a neighbour", hops=2)
+    assert ids.retired.keys() == {b"\xd4"}
+
+
+def test_stored_relay_adverts_retire_codes_at_startup(tmp_path):
     import time
+    from repeater.data_acquisition.sqlite_handler import SQLiteHandler
     from repeater.handler_helpers.advert import AdvertHelper
 
-    ids = one_byte_identities()
+    db = SQLiteHandler(tmp_path)
     now = time.time()
-    storage = SimpleNamespace(
-        get_neighbors=lambda: {
-            "12" + "00" * 31: {"contact_type": "Repeater", "last_seen": now - 3600},
-            "d3" + "00" * 31: {"contact_type": "Room Server", "last_seen": now - 3600},
-            "d4" + "00" * 31: {"contact_type": "Chat Node", "last_seen": now - 3600},
-            "14" + "00" * 31: {"contact_type": "Repeater", "last_seen": now - 90 * 86400},
-        }
-    )
+    adverts = [
+        ("12" + "00" * 31, 2, 0, now - 3600),  # repeater in range: retires 12
+        ("d3" + "00" * 31, 3, 7, now - 3600),  # room far away
+        ("d3" + "00" * 31, 3, 1, now - 3600),  # ...also heard nearby: retires d3
+        ("d4" + "00" * 31, 1, 0, now - 3600),  # companion: never relays
+        ("14" + "00" * 31, 2, 0, now - 90 * 86400),  # too old
+        ("14" + "11" * 31, 2, 6, now - 3600),  # too far
+    ]
+    for key, kind, hops, ts in adverts:
+        db.store_packet(
+            {
+                "timestamp": ts,
+                "type": 4,
+                "route": 1,
+                "length": 120,
+                "transmitted": False,
+                "is_duplicate": False,
+                "raw_packet": advert_raw(key, kind, hops),
+            }
+        )
+    found = db.get_relay_advert_hops(now - 30 * 86400)
+    assert found["d3" + "00" * 31] == (3, 1)
+    ids = one_byte_identities()
+    storage = SimpleNamespace(sqlite_handler=db, get_neighbors=lambda: {})
     helper = AdvertHelper(None, storage, tx_identities=ids)
     assert helper.retire_codes_from_stored_adverts() == 2
     assert ids.retired.keys() == {b"\x12", b"\xd3"}

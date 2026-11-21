@@ -20,7 +20,18 @@ receipt. Not tagged:
 
 * TRACE packets, whose path carries per-hop SNR values rather than hashes;
 * packets we originate, which carry no hop of ours;
-* 1-byte paths (see MIN_ALIAS_WIDTH).
+* 1-byte paths (see MIN_ALIAS_WIDTH), unless ``one_byte`` codes are set.
+
+``one_byte`` opts chosen radios into tagging 1-byte paths with hand-picked
+codes. A 1-byte code is only safe while no real relay in radio range uses that
+byte, so pick bytes that are free on the radio's own mesh (no repeater or room
+heard advertising it, none seen as a local hop) and keep watching: the first
+time a repeater or room advertising a matching key is heard, that code is
+retired until restart and the stored adverts retire it again at startup.
+
+    one_byte:
+      g3909: [d4, "14"]   # native code, crossing code (bridged nodes)
+      rak909: ["12", d3]
 """
 
 import copy
@@ -37,6 +48,8 @@ logger = logging.getLogger("TxIdentities")
 # nodes' hops. Tag and recognise aliases only at 2- and 3-byte widths.
 MIN_ALIAS_WIDTH = 2
 MODES = ("rx_tx", "tx")
+# Advert contact types that relay and so own a hop byte (repeater, room server).
+RELAY_CONTACT_TYPES = (2, 3)
 _PAIR_DOMAIN = b"openhop:tx-identity:rx-tx:v1\0"
 
 
@@ -49,6 +62,8 @@ class TxIdentities:
         self.radios = {}  # tx radio id -> (alias, crossing alias)
         self.pairs = {}  # (rx radio id, tx radio id) -> (alias, crossing alias)
         self.aliases = {}  # alias -> canonical identity it stands for
+        self.one_byte = {}  # tx radio id -> (code, crossing code), one byte each
+        self.retired = {}  # one-byte code -> why it stopped being used
         try:
             self._load(config.get("tx_identity_experiment") or {}, radio_ids)
         except Exception as exc:  # noqa: BLE001 - a diagnostic must never stop the repeater
@@ -57,6 +72,7 @@ class TxIdentities:
             self.radios.clear()
             self.pairs.clear()
             self.aliases.clear()
+            self.one_byte.clear()
             logger.error("TX identity experiment disabled: invalid configuration (%s)", exc)
 
     def _load(self, cfg, radio_ids):
@@ -87,6 +103,7 @@ class TxIdentities:
             used.update(prefixes)
             self._add(key, cross)
             self.radios[rid] = (key, cross)
+        self._load_one_byte(cfg.get("one_byte", {}), known)
         # Only nodes that configured the experiment recognise pair aliases.
         # Keeping the section with enabled: false still resolves learned routes.
         if mode == "rx_tx" and cfg:
@@ -95,6 +112,63 @@ class TxIdentities:
                     self.pairs[(rx, tx)] = self._derive_pair(rx, tx)
         self.mode = mode
         self.enabled = enabled
+
+    def _load_one_byte(self, section, known):
+        if not isinstance(section, dict):
+            raise ValueError("one_byte must map radio ids to [code, crossing code]")
+        used = {self.native[0], self.crossing[0], 0, 255}
+        for rid, codes in section.items():
+            if known is not None and rid not in known:
+                logger.warning("One-byte TX code for unknown radio %r ignored", rid)
+                continue
+            if isinstance(codes, (str, int)):
+                codes = [codes]
+            # Without a crossing code, bridged (crossing) hops from this radio stay untagged.
+            if not isinstance(codes, (list, tuple)) or len(codes) not in (1, 2):
+                raise ValueError("one_byte needs [code] or [code, crossing code] per radio")
+            # YAML reads unquoted 12 or 14 as integers; treat them as the hex text written.
+            parsed = [bytes.fromhex(f"{c:02d}" if isinstance(c, int) else str(c)) for c in codes]
+            if any(len(code) != 1 for code in parsed):
+                raise ValueError("one_byte codes must be one byte (two hex digits)")
+            if {code[0] for code in parsed} & used or len(set(parsed)) != len(parsed):
+                raise ValueError("one_byte codes collide with each other or our own hash")
+            used.update(code[0] for code in parsed)
+            self.one_byte[rid] = (parsed[0], parsed[1] if len(parsed) == 2 else None)
+
+    def _lookup(self, width, include_retired=False):
+        """Each alias prefix at ``width`` -> the canonical prefix it stands for."""
+        if width == 1:
+            lookup = {}
+            for code, cross in self.one_byte.values():
+                lookup[code] = self.native[:1]
+                if cross is not None:
+                    lookup[cross] = self.crossing[:1]
+            return {k: v for k, v in lookup.items() if include_retired or k not in self.retired}
+        if width < MIN_ALIAS_WIDTH:
+            return {}
+        return {alias[:width]: canonical[:width] for alias, canonical in self.aliases.items()}
+
+    def retire(self, code, reason):
+        """Stop tagging with and recognising a one-byte code. True if it was live."""
+        code = bytes(code[:1])
+        live = any(code in pair for pair in self.one_byte.values())
+        if not live or code in self.retired:
+            return False
+        self.retired[code] = reason
+        logger.warning("One-byte TX code %s retired: %s", code.hex().upper(), reason)
+        return True
+
+    def note_advert(self, public_key, contact_type_id, name=None):
+        """Retire a one-byte code when a repeater or room advertising it is heard."""
+        if not self.one_byte or contact_type_id not in RELAY_CONTACT_TYPES:
+            return False
+        try:
+            key = bytes.fromhex(public_key) if isinstance(public_key, str) else bytes(public_key)
+        except ValueError:
+            return False
+        if len(key) != 32:
+            return False
+        return self.retire(key[:1], f"relay {name or key[:4].hex()} advertises {key[:4].hex()}")
 
     def _add(self, key, cross):
         self.aliases[key] = self.native
@@ -122,12 +196,10 @@ class TxIdentities:
         raise ValueError(f"No free alias for radio pair {rx!r}->{tx!r}")
 
     def prefixes(self, width, crossing_only=False):
-        if width < MIN_ALIAS_WIDTH:
-            return set()
         return {
-            key[:width]
-            for key, canonical in self.aliases.items()
-            if not crossing_only or canonical == self.crossing
+            alias
+            for alias, canonical in self._lookup(width).items()
+            if not crossing_only or canonical == self.crossing[:width]
         }
 
     def table(self):
@@ -149,6 +221,17 @@ class TxIdentities:
                 "tx": tx,
             }
             for tx, (key, cross) in self.radios.items()
+        ]
+        rows += [
+            {
+                "prefix": code.hex(),
+                "crossing_prefix": cross.hex() if cross is not None else None,
+                "rx": None,
+                "tx": tx,
+                "width": 1,
+                "retired": sorted(c.hex() for c in (code, cross) if c in self.retired),
+            }
+            for tx, (code, cross) in self.one_byte.items()
         ]
         return rows
 
@@ -177,18 +260,15 @@ class TxIdentities:
 
         The whole route is normalised so the next-hop and loop guards see every
         hop of ours. Only 2- and 3-byte hashes are considered, where an alias
-        matching an unrelated node is about 1 in 2,000 per hop rather than 1 in 30.
+        matching an unrelated node is about 1 in 2,000 per hop rather than 1 in 30,
+        plus configured one-byte codes that are not retired.
         """
-        if (
-            not self.aliases
-            or not packet.is_route_direct()
-            or packet.get_payload_type() == PAYLOAD_TYPE_TRACE
-        ):
+        if not packet.is_route_direct() or packet.get_payload_type() == PAYLOAD_TYPE_TRACE:
             return packet
         width = packet.get_path_hash_size()
-        if width < MIN_ALIAS_WIDTH:
+        lookup = self._lookup(width)
+        if not lookup:
             return packet
-        lookup = {alias[:width]: canonical[:width] for alias, canonical in self.aliases.items()}
         path = bytearray(packet.path)
         changed = False
         for offset in range(0, len(path) - width + 1, width):
@@ -216,35 +296,38 @@ class TxIdentities:
         ):
             return False
         width = packet.get_path_hash_size()
-        if width < MIN_ALIAS_WIDTH or len(packet.path) < width:
+        if len(packet.path) < width or width < 1:
             return False
-        pair = None
-        if self.mode == "rx_tx":
-            pair = self.pairs.get((getattr(packet, "_rx_radio_id", None), radio_id))
-        pair = pair or self.radios.get(radio_id)
+        if width == 1:
+            pair = self.one_byte.get(radio_id)
+        elif width >= MIN_ALIAS_WIDTH:
+            pair = None
+            if self.mode == "rx_tx":
+                pair = self.pairs.get((getattr(packet, "_rx_radio_id", None), radio_id))
+            pair = pair or self.radios.get(radio_id)
+        else:
+            return False
         if pair is None:
             return False
         last = bytes(packet.path[-width:])
-        canonical = (
-            self.native[:width]
-            if last == self.native[:width]
-            else (
-                self.crossing[:width]
-                if last == self.crossing[:width]
-                else next(
-                    (
-                        target[:width]
-                        for alias, target in self.aliases.items()
-                        if alias[:width] == last
-                    ),
-                    None,
-                )
-            )
-        )
+        if last == self.native[:width]:
+            canonical = self.native[:width]
+        elif last == self.crossing[:width]:
+            canonical = self.crossing[:width]
+        else:
+            canonical = self._lookup(width, include_retired=True).get(last)
         if canonical is None:
             return False
         key, crossing = pair
-        packet.path[-width:] = (
+        code = (
             crossing if canonical == self.crossing[:width] and self.crossing != self.native else key
-        )[:width]
+        )
+        if code is None:
+            return False
+        code = code[:width]
+        if code in self.retired:
+            # Put our real hop back rather than leave a retired code on air.
+            packet.path[-width:] = canonical
+            return False
+        packet.path[-width:] = code
         return True

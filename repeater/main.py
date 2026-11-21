@@ -627,8 +627,13 @@ class RepeaterDaemon:
                 storage=self.repeater_handler.storage if self.repeater_handler else None,
                 config=self.config,
                 log_fn=logger.info,
+                tx_identities=getattr(self.repeater_handler, "tx_identities", None),
             )
             logger.info("Advert processing helper initialized")
+            try:
+                await asyncio.to_thread(self.advert_helper.retire_codes_from_stored_adverts)
+            except Exception as exc:  # noqa: BLE001 - a diagnostic must never stop startup
+                logger.error("One-byte TX code check against stored adverts failed: %s", exc)
             if self.repeater_handler and self.repeater_handler.storage:
                 self.repeater_handler.storage.advert_stats_getter = (
                     self.advert_helper.get_rate_limit_stats

@@ -205,3 +205,41 @@ def test_endpoint_errors_and_unconfigured(cherrypy_ctx):
     topology = SimpleNamespace(members={"a": ("n", "transceiver")}, tx_groups={})
     handler = SimpleNamespace(storage=storage, network_topology=topology)
     assert _api(handler).relay_stats()["success"] is False
+
+
+def flood1(payload: str, *hops: str) -> str:
+    """A GRP_TXT flood with 1-byte hops, as stored (hex)."""
+    return "15" + f"{len(hops):02x}" + "".join(hops) + payload
+
+
+def test_one_byte_codes_are_attributed_even_when_an_upstream_hop_shares_the_byte(tmp_path):
+    h = SQLiteHandler(tmp_path)
+    ts = time.time() - 120
+    pid = h.store_packet(
+        {
+            "timestamp": ts,
+            "type": 5,
+            "route": 1,
+            "length": 40,
+            "transmitted": True,
+            "is_duplicate": False,
+            "rx_radio_id": "g3910",
+        }
+    )
+    # Upstream hop 12 happens to equal rak909's code; our code is the last one.
+    legs = [("g3909", "d4", True), ("rak909", "12", True)]
+    h.store_packet_egress(
+        pid,
+        ts,
+        [
+            {"radio_id": r, "success": ok, "raw_packet": flood1("06" * 20, "12", c)}
+            for r, c, ok in legs
+        ],
+    )
+    packet_hash = packet_hash_of(flood1("06" * 20, "12", "d4"))
+    heard(h, packet_hash, ["12", "D4", "94"])
+    smf = {n["network"]: n for n in _stats(h)["networks"]}["smf909"]
+    assert (smf["tagged"], smf["relayed"]) == (1, 1)
+    radios = {r["radio_id"]: r for r in smf["radios"]}
+    assert (radios["g3909"]["relayed"], radios["rak909"]["relayed"]) == (1, 0)
+    assert {n["neighbour"] for n in smf["neighbours"]} == {"94"}

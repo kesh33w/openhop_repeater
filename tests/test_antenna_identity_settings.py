@@ -82,3 +82,18 @@ def test_endpoint_stages_the_change_for_restart(monkeypatch):
     saved = api.config_manager.update_and_save.call_args
     assert saved.args[0]["tx_identity_experiment"]["enabled"] is False
     assert saved.kwargs == {"live_update": False}
+
+
+def test_one_byte_codes_pass_settings_validation():
+    from repeater.web.antenna_identity_settings import antenna_identity_candidate
+
+    config = {
+        "radios": [{"id": "g3909"}, {"id": "rak909"}],
+        "tx_identity_experiment": {
+            "enabled": False,
+            "mode": "rx_tx",
+            "one_byte": {"g3909": ["d4", "14"], "rak909": ["12", "d3"]},
+        },
+    }
+    out = antenna_identity_candidate(config, {"mode": "rx_tx"})
+    assert out["tx_identity_experiment"]["one_byte"]["g3909"] == ["d4", "14"]

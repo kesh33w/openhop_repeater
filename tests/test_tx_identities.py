@@ -1,4 +1,5 @@
 import pytest
+from types import SimpleNamespace
 from repeater.tx_identities import TxIdentities
 from repeater.bridge_protocols import crossing_route_identity
 from openhop_core.protocol.packet import Packet
@@ -252,3 +253,127 @@ def test_status_labels_include_legacy_tx_aliases():
     ids = identities()
     labels = {r["label"] for r in ids.status_labels()}
     assert "BD6E tx directional" in labels and "BD6E tx rak" in labels
+
+
+ONE_BYTE = {"directional": ["d4", "14"], "rak": [12, "d3"]}
+
+
+def one_byte_identities(one_byte=ONE_BYTE, **extra):
+    native = bytes.fromhex("bd6e" + "11" * 30)
+    section = {"enabled": True, "mode": "tx", "one_byte": one_byte, **extra}
+    return TxIdentities(
+        {"tx_identity_experiment": section},
+        native,
+        crossing_route_identity(native),
+        radio_ids=["directional", "rak", "bay"],
+    )
+
+
+@pytest.mark.parametrize(
+    "crossing,radio,code",
+    [
+        (False, "directional", "d4"),
+        (True, "directional", "14"),
+        (False, "rak", "12"),
+        (True, "rak", "d3"),
+    ],
+)
+def test_one_byte_codes_tag_and_route_back(crossing, radio, code):
+    ids = one_byte_identities()
+    assert ids.enabled
+    canonical = ids.crossing if crossing else ids.native
+    p = packet(1, canonical)
+    h = p.calculate_packet_hash()
+    assert ids.tag(p, radio)
+    assert p.path.hex() == "77" + code and p.calculate_packet_hash() == h
+    # Re-tagging a copy made from a tagged packet names the new transmitter.
+    other = "rak" if radio == "directional" else "directional"
+    assert ids.tag(p, other) and p.path.hex() != "77" + code
+    p.header = ROUTE_TYPE_DIRECT
+    p.path[-1:] = bytes.fromhex(code)
+    assert ids.canonical_direct(p).path[-1:] == canonical[:1]
+    assert bytes.fromhex(code) in ids.prefixes(1, crossing_only=crossing)
+
+
+def test_radio_without_one_byte_code_leaves_one_byte_paths_alone():
+    ids = one_byte_identities()
+    p = packet(1, ids.native)
+    raw = p.write_to()
+    assert not ids.tag(p, "bay") and p.write_to() == raw
+    # 2-byte paths are not tagged in tx mode without per-radio keys either.
+    assert not ids.tag(packet(2, ids.native), "directional")
+
+
+def test_single_code_tags_native_hops_only():
+    ids = one_byte_identities({"directional": ["d4"]})
+    assert ids.tag(packet(1, ids.native), "directional")
+    p = packet(1, ids.crossing)
+    raw = p.write_to()
+    assert not ids.tag(p, "directional") and p.write_to() == raw
+    assert ids.prefixes(1, crossing_only=True) == set()
+
+
+def test_relay_advert_retires_its_byte_and_restores_our_hop():
+    ids = one_byte_identities()
+    p = packet(1, ids.native)
+    assert ids.tag(p, "directional") and p.path[-1:] == b"\xd4"
+    assert not ids.note_advert("d4" + "00" * 31, 1, "a companion")  # chat nodes don't relay
+    assert ids.note_advert("d4" + "00" * 31, 2, "New Repeater")
+    assert not ids.note_advert("d4" + "11" * 31, 3, "same byte again")
+    assert ids.retired.keys() == {b"\xd4"}
+    # A packet already carrying the retired code goes out with our real hop.
+    assert not ids.tag(p, "directional") and p.path[-1:] == ids.native[:1]
+    fresh = packet(1, ids.native)
+    assert not ids.tag(fresh, "directional") and fresh.path[-1:] == ids.native[:1]
+    d = packet(1, b"\xd4", direct=True)
+    assert ids.canonical_direct(d) is d
+    assert b"\xd4" not in ids.prefixes(1)
+    # Other codes keep working.
+    assert ids.tag(packet(1, ids.crossing), "directional")
+    row = next(r for r in ids.table() if r["tx"] == "directional" and r.get("width") == 1)
+    assert row["retired"] == ["d4"]
+
+
+@pytest.mark.parametrize(
+    "one_byte",
+    [
+        {"directional": ["bd", "14"]},  # our own native byte
+        {"directional": ["00", "14"]},
+        {"directional": ["d4", "d4"]},
+        {"directional": ["d4", "14"], "rak": ["14", "12"]},
+        {"directional": ["d4", "14", "12"]},
+        {"directional": ["d4d4"]},
+        ["d4"],
+    ],
+)
+def test_invalid_one_byte_config_disables_experiment(one_byte, caplog):
+    ids = one_byte_identities(one_byte)
+    assert not ids.enabled and ids.one_byte == {} and ids.prefixes(1) == set()
+
+
+def test_one_byte_codes_work_alongside_rx_tx_pair_aliases():
+    ids = one_byte_identities(mode="rx_tx")
+    for width in (2, 1):
+        p = packet(width, ids.native)
+        p._rx_radio_id = "bay"
+        assert ids.tag(p, "directional")
+    assert p.path[-1:] == b"\xd4"
+
+
+def test_stored_relay_adverts_retire_codes_at_startup():
+    import time
+    from repeater.handler_helpers.advert import AdvertHelper
+
+    ids = one_byte_identities()
+    now = time.time()
+    storage = SimpleNamespace(
+        get_neighbors=lambda: {
+            "12" + "00" * 31: {"contact_type": "Repeater", "last_seen": now - 3600},
+            "d3" + "00" * 31: {"contact_type": "Room Server", "last_seen": now - 3600},
+            "d4" + "00" * 31: {"contact_type": "Chat Node", "last_seen": now - 3600},
+            "14" + "00" * 31: {"contact_type": "Repeater", "last_seen": now - 90 * 86400},
+        }
+    )
+    helper = AdvertHelper(None, storage, tx_identities=ids)
+    assert helper.retire_codes_from_stored_adverts() == 2
+    assert ids.retired.keys() == {b"\x12", b"\xd3"}

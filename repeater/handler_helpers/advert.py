@@ -41,7 +41,7 @@ TIER_MULTIPLIERS = {
 class AdvertHelper:
     """Helper class for processing advertisement packets in the repeater."""
 
-    def __init__(self, local_identity, storage, config=None, log_fn=None):
+    def __init__(self, local_identity, storage, config=None, log_fn=None, tx_identities=None):
         """
         Initialize the advert helper.
 
@@ -53,6 +53,8 @@ class AdvertHelper:
         self.local_identity = local_identity
         self.storage = storage
         self.config = config or {}
+        # Retires one-byte TX codes that a real repeater or room turns out to use.
+        self.tx_identities = tx_identities
 
         # Create AdvertHandler internally as a parsing utility
         self.advert_handler = AdvertHandler(log_fn=log_fn or logger.info)
@@ -459,6 +461,20 @@ class AdvertHelper:
         now = time.time()
         self._update_metrics_window(now, is_advert=False, is_duplicate=is_duplicate)
 
+    def retire_codes_from_stored_adverts(self, max_age_seconds=30 * 86400):
+        """Retire one-byte TX codes owned by relays heard recently (before restart)."""
+        if self.tx_identities is None or not self.tx_identities.one_byte or not self.storage:
+            return 0
+        names = {"Repeater": 2, "Room Server": 3}
+        cutoff = time.time() - max_age_seconds
+        retired = 0
+        for pubkey, info in (self.storage.get_neighbors() or {}).items():
+            if (info.get("last_seen") or 0) < cutoff:
+                continue
+            kind = names.get(info.get("contact_type"), 2 if info.get("is_repeater") else None)
+            retired += self.tx_identities.note_advert(pubkey, kind, info.get("node_name"))
+        return retired
+
     def get_rate_limit_stats(self) -> dict:
         """Get comprehensive rate limiting and adaptive tier statistics."""
         now = time.time()
@@ -558,6 +574,10 @@ class AdvertHelper:
 
             # Extract data from parsed advert
             pubkey = advert_data["public_key"]
+            if self.tx_identities is not None:
+                self.tx_identities.note_advert(
+                    pubkey, advert_data.get("contact_type_id"), advert_data.get("name")
+                )
             node_name = advert_data["name"]
             contact_type = advert_data["contact_type"]
 

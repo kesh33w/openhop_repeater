@@ -77,11 +77,47 @@ observer's key (SacMesh CoreScope fork).
 
 ## Not tagged
 
-- **1-byte paths.** A 1-byte alias is shared by many real nodes, so it could not
-  identify an antenna and would be mistaken for other nodes' hops. Aliases are
-  only used, and only recognised, with 2- and 3-byte path hashes.
+- **1-byte paths**, unless `one_byte` codes are configured (below). A 1-byte
+  alias is normally shared by real nodes, so it could not identify an antenna
+  and would be mistaken for other nodes' hops.
 - **TRACE packets.** Their path holds per-hop SNR values, not node hashes.
 - **Packets we originate.** They carry no hop of ours.
+
+## One-byte codes
+
+Most floods on a busy mesh use 1-byte paths, which the aliases above cannot
+tag. `one_byte` gives chosen transmitters a hand-picked 1-byte code, in either
+mode, for bytes that no relay on that radio's mesh uses:
+
+```yaml
+tx_identity_experiment:
+  one_byte:
+    g3909: [d4, "14"]    # code for our native hop, code for our crossing hop
+    rak909: ["12", d3]   # quote codes that are all digits; YAML reads 12 as a number
+```
+
+Give a second (crossing) code to also tag packets that crossed the bridge; with
+one code only native hops are tagged. Codes may not be `00`, `ff`, our own or
+our crossing identity's first byte, or repeat. Codes on other radios' meshes do
+not matter, so check only the mesh each radio transmits on.
+
+**Choosing bytes.** A byte is taken if CoreScope places a repeater or room using
+it on that mesh, if the Pi heard a repeater or room advertise it there, or if it
+appears among the last three hops of packets heard on that mesh's radios. On
+2026-11-20 the Sacramento 909.875 mesh had 71 free bytes; `d4 12 14 d3` were
+picked because they are also unused on the Bay mesh.
+
+**Staying collision-free.** The moment a repeater or room advertising a key
+that starts with one of the codes is heard, that code is retired: it stops being
+tagged and stops being recognised as ours, and the repeater logs `One-byte TX
+code D4 retired: relay <name> advertises d4…`. At startup, relays heard in the
+last 30 days (stored adverts) retire codes the same way. `tx_identity_aliases`
+lists one-byte codes with `width: 1` and the `retired` codes. Retiring lasts
+until restart; to bring a code back for good, pick a new free byte.
+
+Remaining risk: a relay that has not advertised since we last heard it could
+still share a code. Its direct routes through that byte would be taken as ours,
+just as already happens for our own native 1-byte hash.
 
 ## Deploying
 

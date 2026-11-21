@@ -4,7 +4,13 @@ Fork-specific changes to OpenHop Repeater. Upstream changes are in upstream's hi
 
 ## [Unreleased]
 
+### Added
+
+- **One-byte antenna identity codes.** `tx_identity_experiment.one_byte` gives chosen transmitters a hand-picked 1-byte code (and an optional crossing code), so 1-byte floods, most traffic on a busy mesh, are tagged and counted in `/api/relay_stats`. A code is retired as soon as a repeater or room advertising that byte is heard, live or in the last 30 days of stored adverts. See [docs/tx-identities.md](docs/tx-identities.md#one-byte-codes).
+
 ### Fixed
+
+- **`/api/relay_stats` could credit the wrong copy** when an older hop in the path shared a code's bytes; it now matches the newest hop, which is the one this node added.
 
 - **`/api/relay_stats` returned a stray `codes` field** for a radio none of whose copies carried a distinct code yet. Only the documented fields are returned.
 

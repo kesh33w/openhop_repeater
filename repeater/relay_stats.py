@@ -12,8 +12,9 @@ in send order. Joining the two by packet hash tells, per neighbour, which radio'
 copy it relayed and whether that copy went first or second.
 
 Only packets whose two copies carry different codes can be told apart. Copies
-are identical when identity codes are off, on 1-byte paths (too short for an
-alias), and on direct routes (no trail to tag); those are counted as
+are identical when identity codes are off, on 1-byte paths unless ``one_byte``
+codes are configured for both radios, and on direct routes (no trail to tag);
+those are counted as
 ``untagged``. A relay is counted once per (packet, neighbour), however many of
 this node's radios heard it.
 """
@@ -149,8 +150,10 @@ def fold_relay_stats(
             # (neighbour -> leg) once per packet, whichever of our radios heard it.
             heard: Dict[str, dict] = {}
             for path in paths_by_hash.get(send["hash"], ()):
-                for i, hop in enumerate(path[:-1]):
-                    leg = codes.get(hop)
+                # Search from the end: our code is the newest matching hop, and with
+                # 1-byte codes an older upstream hop can share its byte.
+                for i in range(len(path) - 2, -1, -1):
+                    leg = codes.get(path[i])
                     if leg is not None:
                         heard.setdefault(path[i + 1].upper(), leg)
                         break

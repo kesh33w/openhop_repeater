@@ -94,6 +94,8 @@ tx_identity_experiment:
   one_byte:
     g3909: [d4, "14"]    # code for our native hop, code for our crossing hop
     rak909: ["12", d3]   # quote codes that are all digits; YAML reads 12 as a number
+    g3910: ["44", "37"]
+    rak910: ["49", 8b]
 ```
 
 Give a second (crossing) code to also tag packets that crossed the bridge; with
@@ -106,6 +108,12 @@ it on that mesh, if the Pi heard a repeater or room advertise it there, or if it
 appears among the last three hops of packets heard on that mesh's radios. On
 2026-11-20 the Sacramento 909.875 mesh had 71 free bytes; `d4 12 14 d3` were
 picked because they are also unused on the Bay mesh.
+
+The Bay 910.525 mesh is far denser: 238 of 256 bytes belong to Bay relays on
+CoreScope. On 2026-11-21, `44 37 49 8b` were the only bytes with no CoreScope
+Bay relay, at most two local-hop sightings on the 910 radios in 30 days, and no
+relay within 3 hops (nearest 4, 11, 5 and 9 hops). Expect these codes to be
+retired sooner as new Bay relays appear; pick replacements the same way.
 
 **Staying collision-free.** The moment a repeater or room advertising a key
 that starts with one of the codes is heard within 2 hops, that code is retired: it stops being

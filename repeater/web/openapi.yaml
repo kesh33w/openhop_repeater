@@ -6775,16 +6775,30 @@ components:
                 properties:
                   prefix:
                     type: string
-                    description: First two bytes of the alias, as shown in packet paths.
+                    description: The alias as shown in packet paths (first two bytes, or the one-byte code).
                   crossing_prefix:
                     type: string
-                    description: Prefix used when the repeat crossed the bridge.
+                    nullable: true
+                    description: Prefix used when the repeat crossed the bridge; null for a one-byte code without a crossing code.
                   rx:
                     type: string
                     nullable: true
                     description: Receiving radio id; null for a per-transmitter alias.
                   tx:
                     type: string
+                  width:
+                    type: integer
+                    description: Path hash width this alias tags (1 for one-byte codes; absent for 2- and 3-byte aliases).
+                  retired:
+                    type: array
+                    items:
+                      type: string
+                    description: One-byte codes of this row that stopped being used because a nearby relay shares them.
+                  retired_reasons:
+                    type: object
+                    additionalProperties:
+                      type: string
+                    description: Why each retired code was retired, by code.
     AntennaIdentityState:
       type: object
       properties:

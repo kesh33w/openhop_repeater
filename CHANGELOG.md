@@ -4,6 +4,10 @@ Fork-specific changes to OpenHop Repeater. Upstream changes are in upstream's hi
 
 ## [Unreleased]
 
+### Added
+
+- **Why a one-byte code was retired.** `tx_identity_aliases` and `/api/bridge_diagnostics` give `retired_reasons` per retired code (which relay, how many hops away), so the web UI can show it.
+
 ## [1.4.2] - 2026-11-21
 
 ### Fixed

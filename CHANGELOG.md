@@ -4,8 +4,11 @@ Fork-specific changes to OpenHop Repeater. Upstream changes are in upstream's hi
 
 ## [Unreleased]
 
+## [1.5.0] - 2026-11-21
+
 ### Added
 
+- **Bundled web UI** rebuilt from UI 594567e: a HydraHop status card on the Dashboard, warnings for retired one-byte antenna codes (Dashboard, Analytics → Antennas, Crossing diagnostics) and HH badges with new-feature dots in the menu.
 - **Why a one-byte code was retired.** `tx_identity_aliases` and `/api/bridge_diagnostics` give `retired_reasons` per retired code (which relay, how many hops away), so the web UI can show it.
 
 ## [1.4.2] - 2026-11-21

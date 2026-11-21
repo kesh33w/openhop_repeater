@@ -332,6 +332,7 @@ def test_relay_advert_retires_its_byte_and_restores_our_hop():
     assert ids.tag(packet(1, ids.crossing), "directional")
     row = next(r for r in ids.table() if r["tx"] == "directional" and r.get("width") == 1)
     assert row["retired"] == ["d4"]
+    assert "New Repeater" in row["retired_reasons"]["d4"]
 
 
 @pytest.mark.parametrize(

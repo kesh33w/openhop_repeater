@@ -246,6 +246,9 @@ class TxIdentities:
                 "tx": tx,
                 "width": 1,
                 "retired": sorted(c.hex() for c in (code, cross) if c in self.retired),
+                "retired_reasons": {
+                    c.hex(): self.retired[c] for c in (code, cross) if c in self.retired
+                },
             }
             for tx, (code, cross) in self.one_byte.items()
         ]

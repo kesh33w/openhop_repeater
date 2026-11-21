@@ -462,17 +462,22 @@ class AdvertHelper:
         self._update_metrics_window(now, is_advert=False, is_duplicate=is_duplicate)
 
     def retire_codes_from_stored_adverts(self, max_age_seconds=30 * 86400):
-        """Retire one-byte TX codes owned by relays heard recently (before restart)."""
-        if self.tx_identities is None or not self.tx_identities.one_byte or not self.storage:
+        """Retire one-byte TX codes owned by nearby relays heard before this restart."""
+        identities = self.tx_identities
+        if identities is None or not identities.one_byte or not self.storage:
             return 0
-        names = {"Repeater": 2, "Room Server": 3}
-        cutoff = time.time() - max_age_seconds
+        handler = getattr(self.storage, "sqlite_handler", None)
+        if handler is None:
+            return 0
+        names = {
+            pubkey: info.get("node_name")
+            for pubkey, info in (self.storage.get_neighbors() or {}).items()
+        }
         retired = 0
-        for pubkey, info in (self.storage.get_neighbors() or {}).items():
-            if (info.get("last_seen") or 0) < cutoff:
-                continue
-            kind = names.get(info.get("contact_type"), 2 if info.get("is_repeater") else None)
-            retired += self.tx_identities.note_advert(pubkey, kind, info.get("node_name"))
+        for pubkey, (kind, hops) in handler.get_relay_advert_hops(
+            time.time() - max_age_seconds
+        ).items():
+            retired += identities.note_advert(pubkey, kind, names.get(pubkey), hops=hops)
         return retired
 
     def get_rate_limit_stats(self) -> dict:
@@ -576,7 +581,10 @@ class AdvertHelper:
             pubkey = advert_data["public_key"]
             if self.tx_identities is not None:
                 self.tx_identities.note_advert(
-                    pubkey, advert_data.get("contact_type_id"), advert_data.get("name")
+                    pubkey,
+                    advert_data.get("contact_type_id"),
+                    advert_data.get("name"),
+                    hops=packet.get_path_hash_count() if packet.is_route_flood() else 0,
                 )
             node_name = advert_data["name"]
             contact_type = advert_data["contact_type"]

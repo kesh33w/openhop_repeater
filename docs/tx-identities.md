@@ -108,10 +108,13 @@ appears among the last three hops of packets heard on that mesh's radios. On
 picked because they are also unused on the Bay mesh.
 
 **Staying collision-free.** The moment a repeater or room advertising a key
-that starts with one of the codes is heard, that code is retired: it stops being
+that starts with one of the codes is heard within 2 hops, that code is retired: it stops being
 tagged and stops being recognised as ours, and the repeater logs `One-byte TX
-code D4 retired: relay <name> advertises d4…`. At startup, relays heard in the
-last 30 days (stored adverts) retire codes the same way. `tx_identity_aliases`
+code D4 retired: relay <name> advertises d4…`. At startup, relays heard within 2 hops
+in the last 30 days (stored advert packets) retire codes the same way. Relays
+further away cannot hear packets addressed to this node, so they are ignored;
+adverts reach the Pi from across the state, and on 2026-11-21 the nearest
+relays sharing `d4`, `12` and `14` were 5, 7 and 9 hops away. `tx_identity_aliases`
 lists one-byte codes with `width: 1` and the `retired` codes. Retiring lasts
 until restart; to bring a code back for good, pick a new free byte.
 

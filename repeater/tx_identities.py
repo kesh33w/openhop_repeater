@@ -26,8 +26,10 @@ receipt. Not tagged:
 codes. A 1-byte code is only safe while no real relay in radio range uses that
 byte, so pick bytes that are free on the radio's own mesh (no repeater or room
 heard advertising it, none seen as a local hop) and keep watching: the first
-time a repeater or room advertising a matching key is heard, that code is
-retired until restart and the stored adverts retire it again at startup.
+time a repeater or room advertising a matching key is heard within
+MAX_COLLISION_HOPS, that code is retired until restart, and adverts stored in
+the last 30 days retire it again at startup. Relays further away cannot hear
+packets addressed to us, so they do not collide.
 
     one_byte:
       g3909: [d4, "14"]   # native code, crossing code (bridged nodes)
@@ -50,6 +52,10 @@ MIN_ALIAS_WIDTH = 2
 MODES = ("rx_tx", "tx")
 # Advert contact types that relay and so own a hop byte (repeater, room server).
 RELAY_CONTACT_TYPES = (2, 3)
+# A relay collides with a one-byte code only if it can hear direct packets meant
+# for us: one that hears our neighbours, so its advert reaches us in <= 1 relay.
+# One extra hop of margin.
+MAX_COLLISION_HOPS = 2
 _PAIR_DOMAIN = b"openhop:tx-identity:rx-tx:v1\0"
 
 
@@ -158,9 +164,17 @@ class TxIdentities:
         logger.warning("One-byte TX code %s retired: %s", code.hex().upper(), reason)
         return True
 
-    def note_advert(self, public_key, contact_type_id, name=None):
-        """Retire a one-byte code when a repeater or room advertising it is heard."""
-        if not self.one_byte or contact_type_id not in RELAY_CONTACT_TYPES:
+    def note_advert(self, public_key, contact_type_id, name=None, hops=0):
+        """Retire a one-byte code when a nearby repeater or room advertises it.
+
+        ``hops`` is how many relays the advert passed through to reach us.
+        """
+        if (
+            not self.one_byte
+            or contact_type_id not in RELAY_CONTACT_TYPES
+            or hops is None
+            or hops > MAX_COLLISION_HOPS
+        ):
             return False
         try:
             key = bytes.fromhex(public_key) if isinstance(public_key, str) else bytes(public_key)
@@ -168,7 +182,9 @@ class TxIdentities:
             return False
         if len(key) != 32:
             return False
-        return self.retire(key[:1], f"relay {name or key[:4].hex()} advertises {key[:4].hex()}")
+        return self.retire(
+            key[:1], f"relay {name or key[:4].hex()} advertises {key[:4].hex()} {hops} hop(s) away"
+        )
 
     def _add(self, key, cross):
         self.aliases[key] = self.native

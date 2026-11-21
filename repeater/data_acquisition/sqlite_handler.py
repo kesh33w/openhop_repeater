@@ -2923,13 +2923,13 @@ class SQLiteHandler:
                 packet = Packet()
                 packet.read_from(bytes.fromhex(raw))
                 payload = bytes(packet.payload)
-                if len(payload) < 101:
-                    continue
-                pubkey = payload[:32].hex()
-                kind = payload[100] & 0x0F
                 hops = packet.get_path_hash_count() if packet.is_route_flood() else 0
-            except Exception:  # noqa: BLE001 - one bad row must not hide the rest
+            except Exception as exc:  # noqa: BLE001 - one bad row must not hide the rest
+                logger.debug("Skipping unreadable stored advert: %s", exc)
+                payload = b""
+            if len(payload) < 101:
                 continue
+            pubkey, kind = payload[:32].hex(), payload[100] & 0x0F
             if pubkey not in result or hops < result[pubkey][1]:
                 result[pubkey] = (kind, hops)
         return result

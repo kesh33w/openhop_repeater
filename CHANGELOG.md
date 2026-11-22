@@ -4,6 +4,10 @@ Fork-specific changes to OpenHop Repeater. Upstream changes are in upstream's hi
 
 ## [Unreleased]
 
+### Added
+
+- **CRC errors that follow our own sends.** `/api/antenna_stats` gives each radio a `crc_after_sends` estimate: CRC errors per send, the share of the window's CRC errors that follow this node's sends on the radio's network, and the rate left over (`other_per_hour`). CRC errors and sends are counted per five-minute bucket (only buckets in which the radio was sampled) and fitted with a straight line. On the Pi about half of all CRC errors follow our own sends: most likely neighbours repeating what we just sent at the same moment, copies of a packet already sent, so nothing is lost.
+
 ## [1.5.2] - 2026-11-22
 
 ### Changed

@@ -7236,13 +7236,16 @@ components:
 
     AntennaStats:
       type: object
-      required: [hours, match_window_seconds, radios, networks]
+      required: [hours, match_window_seconds, crc_bucket_seconds, radios, networks]
       properties:
         hours:
           type: integer
         match_window_seconds:
           type: number
           description: Two receptions of the same packet from the same relay this close in time count as one RF frame for signal_gaps.
+        crc_bucket_seconds:
+          type: integer
+          description: Bucket length used to estimate crc_after_sends.
         topology_source:
           type: string
           nullable: true
@@ -7259,7 +7262,7 @@ components:
 
     AntennaRadioStats:
       type: object
-      required: [radio_id, network, role, recorded, transmits, has_data, received, duplicates, bridge_echoes, rssi_avg, snr_avg, unique_packets, noise, crc_errors, crc_errors_per_hour, upstream_repeaters, unique_upstream_repeaters, sends, send_failures, busy_holds, backoff_avg_ms]
+      required: [radio_id, network, role, recorded, transmits, has_data, received, duplicates, bridge_echoes, rssi_avg, snr_avg, unique_packets, noise, crc_errors, crc_errors_per_hour, crc_after_sends, upstream_repeaters, unique_upstream_repeaters, sends, send_failures, busy_holds, backoff_avg_ms]
       properties:
         radio_id:
           type: string
@@ -7317,6 +7320,30 @@ components:
           type: integer
         crc_errors_per_hour:
           type: number
+        crc_after_sends:
+          type: object
+          nullable: true
+          description: >-
+            Estimate of the CRC errors that follow this node's own sends on the
+            radio's network: CRC errors per bucket fitted against sends per bucket.
+            Mostly neighbours repeating what we just sent and colliding. Null with
+            under two hours of samples, no CRC errors, or no variation in sends.
+          required: [per_send, estimated, share, other_per_hour, sampled_hours]
+          properties:
+            per_send:
+              type: number
+              description: Extra CRC errors per send on this network.
+            estimated:
+              type: integer
+              description: CRC errors in the window attributed to our sends.
+            share:
+              type: number
+              description: estimated / crc_errors over the sampled buckets, 0 to 1.
+            other_per_hour:
+              type: number
+              description: CRC errors per hour not explained by our sends.
+            sampled_hours:
+              type: number
         upstream_repeaters:
           type: integer
           description: Distinct repeaters this antenna heard relaying packets to us.

@@ -228,3 +228,55 @@ def test_same_frame_query_uses_indexes(db):
     with db._connect() as conn:
         plan = str(conn.execute("EXPLAIN QUERY PLAN " + MATCHED_FRAMES_QUERY, params).fetchall())
     assert "idx_packets_hash" in plan and "SCAN a" not in plan
+
+
+def test_crc_after_sends_fits_errors_per_send():
+    from repeater.antenna_stats import CRC_MIN_BUCKETS, crc_after_sends
+
+    sampled = set(range(48))
+    # 2 CRC errors per send plus 3 per bucket regardless of sends.
+    sends = {b: b % 4 for b in sampled}
+    crc = {b: 3 + 2 * sends[b] for b in sampled}
+    est = crc_after_sends(crc, sends, sampled)
+    assert est["per_send"] == 2.0
+    assert est["estimated"] == 2 * sum(sends.values())
+    assert est["share"] == round(est["estimated"] / sum(crc.values()), 2)
+    assert est["other_per_hour"] == 36.0  # 3 per five minutes
+    assert est["sampled_hours"] == 4.0
+
+    # Buckets where the radio wasn't sampled are left out, not counted as zero.
+    noisy_crc = {**crc, 100: 50, 101: 0}
+    noisy_sends = {**sends, 100: 0, 101: 9}
+    assert crc_after_sends(noisy_crc, noisy_sends, sampled)["per_send"] == 2.0
+    # Too few buckets, no variation in sends, or no errors: no estimate.
+    assert crc_after_sends(crc, sends, set(range(CRC_MIN_BUCKETS - 1))) is None
+    assert crc_after_sends(crc, {b: 1 for b in sampled}, sampled) is None
+    assert crc_after_sends({}, sends, sampled) is None
+    # Errors that fall when we send less never give a negative estimate.
+    inverse = {b: 9 - 2 * sends[b] for b in sampled}
+    assert crc_after_sends(inverse, sends, sampled)["estimated"] == 0
+
+
+def test_crc_after_sends_uses_network_sends(tmp_path):
+    h = SQLiteHandler(tmp_path)
+    end = time.time()
+    start = end - 3 * 3600
+    for i in range(36):  # 3 h of 5-minute buckets
+        ts = start + i * 300 + 150
+        sends = i % 3
+        for radio in ("g3909", "rak909", "g3910"):
+            h.store_noise_floor({"timestamp": ts, "noise_floor_dbm": -100.0, "radio_id": radio})
+        # rak909 errors follow sends by g3909 (same network) only.
+        h.store_crc_errors({"timestamp": ts + 1, "count": 1 + 2 * sends, "radio_id": "rak909"})
+        h.store_crc_errors({"timestamp": ts + 1, "count": 4, "radio_id": "g3910"})
+        for _ in range(sends):
+            pid = _rx(h, "g3909", f"S{i}", -95, 1.0, ts=ts)
+            h.store_packet_egress(pid, ts, [{"radio_id": "g3909", "success": True}])
+    stats = h.get_antenna_stats(start, end, groups=GROUPS, roles=ROLES)
+    r = {x["radio_id"]: x for x in stats["radios"]}
+    assert stats["crc_bucket_seconds"] == 300
+    assert r["rak909"]["crc_after_sends"]["per_send"] == 2.0
+    assert r["rak909"]["crc_after_sends"]["other_per_hour"] == 12.0
+    # 910 had no sends at all, so nothing to fit; rak910 has no samples.
+    assert r["g3910"]["crc_after_sends"] is None
+    assert r["rak910"]["crc_after_sends"] is None

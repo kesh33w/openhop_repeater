@@ -3431,6 +3431,17 @@ class SQLiteHandler:
                         "radios": json.dumps(radio_ids),
                     },
                 ).fetchall()
+                buckets = {
+                    "start": start_timestamp,
+                    "end": end_timestamp,
+                    "bucket": q.CRC_BUCKET_SECONDS,
+                }
+                for name, query in (
+                    ("crc_buckets", q.CRC_BUCKET_QUERY),
+                    ("sampled_buckets", q.SAMPLED_BUCKET_QUERY),
+                    ("send_buckets", q.SEND_BUCKET_QUERY),
+                ):
+                    rows[name] = conn.execute(query, buckets).fetchall()
             hours = max(1, round((end_timestamp - start_timestamp) / 3600))
             return q.fold_antenna_stats(
                 **rows, groups=groups, roles=roles, tx_scopes=tx_scopes, hours=hours

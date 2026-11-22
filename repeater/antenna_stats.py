@@ -6,6 +6,8 @@ tables the repeater already writes:
 * ``packets``: which radios heard each packet (by ``packet_hash``), with RSSI and
   SNR, and which repeater relayed it to us (``upstream_hash``);
 * ``noise_floor`` and ``crc_errors``: per-radio channel health samples;
+  CRC errors are also split into those that follow this node's own sends
+  (see ``crc_after_sends``) and the rest;
 * ``packet_egress``: per-radio sends, failures and listen-before-talk holds.
 
 Radios are compared within their topology network (antennas on the same
@@ -89,6 +91,41 @@ CRC_QUERY = (
     "WHERE timestamp >= ? AND timestamp <= ? AND radio_id IS NOT NULL GROUP BY radio_id"
 )
 
+# CRC errors that follow our own sends. The radio's CRC counter is sampled about
+# once a minute, so single errors can't be matched to single sends. Instead, CRC
+# errors and sends on the radio's network are counted per CRC_BUCKET_SECONDS
+# bucket and fitted with a straight line: the slope is CRC errors per send, the
+# intercept the rate with no sends. In the field the slope is mostly neighbours
+# repeating what we just sent, at the same moment, and colliding: copies of a
+# packet we already sent, so their loss costs nothing. Five-minute buckets keep
+# the one-poll lag of the counter from leaking much into the next bucket.
+CRC_BUCKET_SECONDS = 300
+# At least two hours of sampled buckets before estimating.
+CRC_MIN_BUCKETS = 24
+
+# Named parameters: start, end, bucket (seconds).
+CRC_BUCKET_QUERY = (
+    "SELECT radio_id, CAST((timestamp - :start) / :bucket AS INTEGER) AS b, "
+    "SUM(count) AS n FROM crc_errors "
+    "WHERE timestamp >= :start AND timestamp <= :end AND radio_id IS NOT NULL "
+    "GROUP BY radio_id, b"
+)
+
+# A bucket counts only when the radio was sampled in it (each sample writes a
+# noise floor row); otherwise an offline radio would look like zero CRC errors.
+SAMPLED_BUCKET_QUERY = (
+    "SELECT DISTINCT radio_id, CAST((timestamp - :start) / :bucket AS INTEGER) AS b "
+    "FROM noise_floor "
+    "WHERE timestamp >= :start AND timestamp <= :end AND radio_id IS NOT NULL"
+)
+
+SEND_BUCKET_QUERY = (
+    "SELECT radio_id, CAST((timestamp - :start) / :bucket AS INTEGER) AS b, "
+    "COUNT(*) AS n FROM packet_egress "
+    "WHERE timestamp >= :start AND timestamp <= :end AND radio_id IS NOT NULL "
+    "GROUP BY radio_id, b"
+)
+
 EGRESS_QUERY = (
     "SELECT radio_id, COUNT(*) AS n, SUM(success = 0) AS failed, "
     "SUM(lbt_channel_busy) AS busy, AVG(lbt_backoff_ms_total) AS backoff "
@@ -108,6 +145,35 @@ def _percentile(sorted_values: List[float], q: float) -> Optional[float]:
     return round(sorted_values[index], 1)
 
 
+def crc_after_sends(crc_by_bucket: Dict[int, int], sends_by_bucket: Dict[int, int], sampled):
+    """Estimate how many CRC errors follow our own sends; None if not estimable.
+
+    Least-squares fit of CRC errors per bucket against sends per bucket, over the
+    buckets in which the radio was sampled.
+    """
+    buckets = sorted(sampled)
+    n = len(buckets)
+    if n < CRC_MIN_BUCKETS:
+        return None
+    xs = [sends_by_bucket.get(b, 0) for b in buckets]
+    ys = [crc_by_bucket.get(b, 0) for b in buckets]
+    total_sends, total_crc = sum(xs), sum(ys)
+    mean_x, mean_y = total_sends / n, total_crc / n
+    sxx = sum((x - mean_x) ** 2 for x in xs)
+    if sxx == 0 or total_crc == 0:
+        return None
+    per_send = max(0.0, sum((x - mean_x) * (y - mean_y) for x, y in zip(xs, ys)) / sxx)
+    after_sends = min(total_crc, round(per_send * total_sends))
+    hours = n * CRC_BUCKET_SECONDS / 3600
+    return {
+        "per_send": round(per_send, 2),
+        "estimated": after_sends,
+        "share": round(after_sends / total_crc, 2),
+        "other_per_hour": _round((total_crc - after_sends) / hours),
+        "sampled_hours": _round(hours),
+    }
+
+
 def fold_antenna_stats(
     *,
     reception: Iterable,
@@ -117,6 +183,9 @@ def fold_antenna_stats(
     crc: Iterable,
     egress: Iterable,
     matched: Iterable = (),
+    crc_buckets: Iterable = (),
+    sampled_buckets: Iterable = (),
+    send_buckets: Iterable = (),
     groups: Dict[str, List[str]],
     roles: Dict[str, Optional[str]],
     tx_scopes: Optional[Dict[str, Optional[str]]] = None,
@@ -147,6 +216,7 @@ def fold_antenna_stats(
             "noise": {"avg": None, "p10": None, "p90": None, "samples": 0},
             "crc_errors": 0,
             "crc_errors_per_hour": 0.0,
+            "crc_after_sends": None,
             "upstream_repeaters": 0,
             "unique_upstream_repeaters": 0,
             "sends": 0,
@@ -245,6 +315,26 @@ def fold_antenna_stats(
             r["crc_errors"] = int(row["n"] or 0)
             r["crc_errors_per_hour"] = _round(r["crc_errors"] / max(1, hours))
 
+    # CRC errors following our own sends, against sends on the radio's network.
+    crc_by: Dict[str, Dict[int, int]] = {rid: {} for rid in radios}
+    for row in crc_buckets:
+        if row["radio_id"] in crc_by:
+            crc_by[row["radio_id"]][int(row["b"])] = int(row["n"] or 0)
+    sampled_by: Dict[str, set] = {rid: set() for rid in radios}
+    for row in sampled_buckets:
+        if row["radio_id"] in sampled_by:
+            sampled_by[row["radio_id"]].add(int(row["b"]))
+    net_sends: Dict[str, Dict[int, int]] = {net: {} for net in groups}
+    for row in send_buckets:
+        net = network_of.get(row["radio_id"])
+        if net is not None:
+            b = int(row["b"])
+            net_sends[net][b] = net_sends[net].get(b, 0) + int(row["n"] or 0)
+    for rid, r in radios.items():
+        r["crc_after_sends"] = crc_after_sends(
+            crc_by[rid], net_sends[network_of[rid]], sampled_by[rid]
+        )
+
     for row in egress:
         r = radios.get(row["radio_id"])
         if r:
@@ -260,6 +350,7 @@ def fold_antenna_stats(
     return {
         "hours": hours,
         "match_window_seconds": MATCH_WINDOW_SECONDS,
+        "crc_bucket_seconds": CRC_BUCKET_SECONDS,
         "radios": list(radios.values()),
         "networks": networks,
     }

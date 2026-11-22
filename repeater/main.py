@@ -9,6 +9,7 @@ import sys
 import threading
 import time
 
+from openhop_core.companion.constants import MAX_PAYLOAD_SIZE as COMPANION_MAX_PAYLOAD
 from openhop_core.companion.radio_capabilities import resolve_max_tx_power_dbm
 from openhop_core.protocol.constants import PAYLOAD_TYPE_RAW_CUSTOM
 
@@ -1423,6 +1424,12 @@ class RepeaterDaemon:
         servers = getattr(self, "companion_frame_servers", [])
         if not servers:
             return
+        # Code, SNR and RSSI bytes precede the packet. Firmware logRxRaw() skips a
+        # packet that does not fit one frame; clipping would leave a frame whose
+        # MAC fails, so skip it quietly instead of warning for every large packet.
+        if len(data) + 3 > COMPANION_MAX_PAYLOAD:
+            logger.debug("Raw RX log skipped: %s-byte packet exceeds companion frame", len(data))
+            return
         for fs in servers:
             receive = companion_receive_members(getattr(fs, "bridge", None))
             if filtered_only and receive is None:
@@ -1511,6 +1518,10 @@ class RepeaterDaemon:
             len(payload_bytes),
         )
         for fs in servers:
+            # A companion with no app connected has no write queue; the core would
+            # log a warning for every discovery response heard while it is idle.
+            if getattr(fs, "_write_queue", None) is None:
+                continue
             try:
                 await fs.push_control_data(snr, rssi, path_len, path_bytes, payload_bytes)
             except Exception as e:

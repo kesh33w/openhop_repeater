@@ -128,3 +128,27 @@ def test_explicit_connect_can_resume_after_shutdown():
     assert not conn._shutdown_requested
     conn.client.connect.assert_called_once()
     conn.client.loop_start.assert_called_once()
+
+
+def test_recovery_after_logged_outage_is_logged_at_info(caplog):
+    conn = connection()
+    conn._running = True
+    with patch(f"{MODULE}.threading.Timer"):
+        conn._on_disconnect(conn.client, None, None, 141)
+        conn.client.connect.side_effect = OSError("The read operation timed out")
+        conn._attempt_reconnect()
+    caplog.clear()
+    with caplog.at_level("INFO", logger="MQTTHandler"):
+        conn._on_connect(conn.client, None, None, 0)
+    assert "Reconnected to test broker after 2 attempt(s)" in caplog.text
+    assert conn._outage_logged is False
+
+
+def test_routine_token_refresh_reconnect_stays_quiet(caplog):
+    conn = connection()
+    conn._running = True
+    with patch(f"{MODULE}.threading.Timer"):
+        conn.reconnect_for_token_expiry()
+    with caplog.at_level("INFO", logger="MQTTHandler"):
+        conn._on_connect(conn.client, None, None, 0)
+    assert "Reconnected" not in caplog.text

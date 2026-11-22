@@ -178,6 +178,13 @@ async def test_raw_rx_and_duplicate_logging_hooks():
     await daemon._on_raw_rx_for_companions(b"xyz", rssi=0, snr=0.0, exclude_hash="0x1a")
     fs_self.push_rx_raw.assert_not_called()
     fs_other.push_rx_raw.assert_called_once()
+
+    # A packet too large for one companion frame is skipped, like firmware logRxRaw().
+    fs_other.push_rx_raw.reset_mock()
+    await daemon._on_raw_rx_for_companions(bytes(174), rssi=-90, snr=2.0)
+    fs_other.push_rx_raw.assert_not_called()
+    await daemon._on_raw_rx_for_companions(bytes(173), rssi=-90, snr=2.0)
+    fs_other.push_rx_raw.assert_called_once()
     daemon.companion_frame_servers = [fs_ok, fs_fail]
 
     engine = SimpleNamespace(
@@ -303,9 +310,12 @@ async def test_final_raw_custom_dispatcher_handler_bypasses_router_and_repeater_
 @pytest.mark.asyncio
 async def test_deliver_control_data_filters_non_discovery_and_pushes_valid():
     daemon = RepeaterDaemon(_base_config(), radio=object())
-    fs_ok = SimpleNamespace(push_control_data=AsyncMock())
-    fs_fail = SimpleNamespace(push_control_data=AsyncMock(side_effect=RuntimeError("err")))
-    daemon.companion_frame_servers = [fs_ok, fs_fail]
+    fs_ok = SimpleNamespace(_write_queue=object(), push_control_data=AsyncMock())
+    fs_fail = SimpleNamespace(
+        _write_queue=object(), push_control_data=AsyncMock(side_effect=RuntimeError("err"))
+    )
+    fs_idle = SimpleNamespace(_write_queue=None, push_control_data=AsyncMock())
+    daemon.companion_frame_servers = [fs_ok, fs_fail, fs_idle]
 
     await daemon.deliver_control_data(1.0, -70, 0, b"", b"\x80\x00")
     fs_ok.push_control_data.assert_not_awaited()
@@ -313,6 +323,8 @@ async def test_deliver_control_data_filters_non_discovery_and_pushes_valid():
     payload = bytes([0x90, 0x00, 0x11, 0x22, 0x33, 0x44])
     await daemon.deliver_control_data(1.0, -70, 2, b"\xaa\xbb", payload)
     fs_ok.push_control_data.assert_awaited_once()
+    # A companion with no app connected is skipped instead of warning per response.
+    fs_idle.push_control_data.assert_not_awaited()
 
 
 @pytest.mark.asyncio

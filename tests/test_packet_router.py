@@ -1841,3 +1841,10 @@ class TestCompanionAckConfirmation(unittest.IsolatedAsyncioTestCase):
         await self._route(bridge, packet)
 
         self.assertEqual(confirmed, [])
+
+
+def test_channel_bridge_policy_drops_are_expected():
+    from repeater.packet_router import _is_expected_drop_reason
+
+    for reason in ("Channel bridge has no allowed destination", "Channel bridge echo"):
+        assert _is_expected_drop_reason(reason), reason

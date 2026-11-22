@@ -79,7 +79,9 @@ def test_bundled_frontend_matches_the_hash_rule():
     # deployed builds. Unhashed names are served with revalidation, never
     # as immutable, so a changed file is still picked up.
     stable = {"cad-mode-control-v1.js"}
-    built = [p.name for p in assets.iterdir() if p.suffix in (".js", ".css") and p.name not in stable]
+    built = [
+        p.name for p in assets.iterdir() if p.suffix in (".js", ".css") and p.name not in stable
+    ]
     # A Vite hash is occasionally all lowercase letters by chance (about 0.07% per
     # file), which the rule can't tell from a word; such a file is only
     # revalidated, never served stale. Allow a few, so a release build isn't

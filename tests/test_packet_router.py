@@ -1843,7 +1843,6 @@ class TestCompanionAckConfirmation(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(confirmed, [])
 
 
-
 def test_channel_bridge_policy_drops_are_expected():
     from repeater.packet_router import _is_expected_drop_reason
 

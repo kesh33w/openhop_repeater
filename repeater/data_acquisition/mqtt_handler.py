@@ -215,6 +215,9 @@ class _BrokerConnection:
         self._running = False
         self._reconnect_attempts = 0
         self._reconnect_timer = None
+        # Set once a drop or failed retry is logged above debug, so the recovery
+        # is logged too (routine JWT-refresh reconnects stay at debug).
+        self._outage_logged = False
         self._max_reconnect_delay = 300  # 5 minutes max
         self._keepalive = broker.get(
             "keepalive", 30
@@ -359,7 +362,14 @@ class _BrokerConnection:
         """MQTT connection callback"""
         rc_value = int(getattr(rc, "value", rc)) if rc is not None else -1
         if rc_value == 0:
-            logger.debug(f"Connected to {self.broker['name']}")
+            if self._outage_logged:
+                logger.info(
+                    f"Reconnected to {self.broker['name']} "
+                    f"after {self._reconnect_attempts} attempt(s)"
+                )
+                self._outage_logged = False
+            else:
+                logger.debug(f"Connected to {self.broker['name']}")
             self._running = True
             self._reconnect_attempts = 0  # Reset counter on success
             # Successful connect can race with a previously scheduled timer; cancel it.
@@ -375,6 +385,7 @@ class _BrokerConnection:
         else:
             error_msg = get_mqtt_error_message(rc_value, is_disconnect=False)
             logger.error(f"Failed to connect to {self.broker['name']}: {error_msg}")
+            self._outage_logged = True
             self._schedule_reconnect(reason=error_msg)
 
     def _on_pre_connect(self, client, userdata):
@@ -409,6 +420,7 @@ class _BrokerConnection:
                 logger.warning(
                     f"Disconnected from {self.broker['name']} (rc={rc_value}): {error_msg}"
                 )
+                self._outage_logged = True
             else:
                 logger.debug(
                     f"Duplicate disconnect callback from {self.broker['name']} while already disconnected "
@@ -472,6 +484,7 @@ class _BrokerConnection:
             self._loop_running = True
         except Exception as e:
             logger.error(f"Reconnection failed for {self.broker['name']}: {e}")
+            self._outage_logged = True
             self._schedule_reconnect()  # Try again later
 
     def _set_credentials(self):

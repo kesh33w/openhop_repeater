@@ -633,3 +633,16 @@ def test_do_install_wrapper_call_omits_pretend_version(isolated_state, monkeypat
 
     assert calls[-1]["cmd"] == [ue._SUDO_BIN, "/usr/local/bin/pymc-do-upgrade", "dev"]
     assert "SETUPTOOLS_SCM_PRETEND_VERSION" not in calls[-1]["env"]
+
+
+def test_repeated_identical_check_failure_warns_once(monkeypatch, caplog):
+    monkeypatch.setattr(ue, "_last_logged_failure", None)
+    with caplog.at_level("DEBUG", logger="HTTPServer"):
+        ue._log_check_failure("HTTP Error 404: Not Found")
+        ue._log_check_failure("HTTP Error 404: Not Found")
+        ue._log_check_failure("rate limited")
+    warnings = [r.getMessage() for r in caplog.records if r.levelname == "WARNING"]
+    assert warnings == [
+        "[Update] Version check failed: HTTP Error 404: Not Found",
+        "[Update] Version check failed: rate limited",
+    ]

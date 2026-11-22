@@ -103,6 +103,10 @@ class DropReason(str, Enum):
     PATH_TOO_LONG = "Path too long"
     INVALID_ADVERT = "Invalid advert packet"
     MULTIPART = "Multipart"
+    # Channel-bridge policy: a receiver-only radio with nowhere to send, or a
+    # neighbour relaying a packet this node already bridged.
+    CHANNEL_BRIDGE_NO_DESTINATION = "Channel bridge has no allowed destination"
+    CHANNEL_BRIDGE_ECHO = "Channel bridge echo"
 
     # Python 3.11+ formats a (str, Enum) member as "DropReason.X" under str()/%s;
     # return the value so log lines and stored records keep the plain reason text.
@@ -563,7 +567,7 @@ class RepeaterHandler(BaseHandler):
             else:
                 if bridge_echo:
                     allow_forward = False
-                    policy_reason = "Channel bridge echo"
+                    policy_reason = DropReason.CHANNEL_BRIDGE_ECHO
 
         # Normalize diagnostic aliases only for routing; retain original RX bytes.
         identities = getattr(self, "tx_identities", None)
@@ -713,7 +717,7 @@ class RepeaterHandler(BaseHandler):
                     processed_packet.drop_reason = (
                         "Channel bridge requires an explicit configured home radio"
                         if bridge_home not in self.channel_bridge.radio_ids
-                        else "Channel bridge has no allowed destination"
+                        else DropReason.CHANNEL_BRIDGE_NO_DESTINATION
                     )
                 else:
                     tx_radio_ids = tuple(send.destination.name for send in send_plan)

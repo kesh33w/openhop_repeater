@@ -4,6 +4,17 @@ Fork-specific changes to OpenHop Repeater. Upstream changes are in upstream's hi
 
 ## [Unreleased]
 
+## [1.5.2] - 2026-11-22
+
+### Changed
+
+- **Quieter logs.** Packets the channel bridge deliberately does not forward ("Channel bridge has no allowed destination", "Channel bridge echo") are logged at debug, not warning: about 5,300 warnings a day on the Pi. Discovery responses are no longer offered to companions with no app connected (about 880 warnings a day). An update check that keeps failing the same way is logged once, then at debug until the result changes.
+- **Large raw-RX log frames are skipped quietly.** A received packet too large for one companion frame is not sent as a raw-RX log (0x88), as firmware `logRxRaw()` does, without a warning each time. Messages to the companion are unaffected.
+
+### Fixed
+
+- **MQTT recovery was invisible.** After a logged disconnect or failed reconnect, the successful reconnect is now logged at INFO ("Reconnected to … after N attempt(s)"), so a broker outage no longer looks permanent in the log. Routine token-refresh reconnects stay at debug.
+
 ## [1.5.1] - 2026-11-21
 
 ### Changed

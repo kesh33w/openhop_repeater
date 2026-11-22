@@ -785,6 +785,7 @@ def _fetch_branches() -> List[str]:
 
 def _do_check() -> None:
     """Background thread: fetch latest version and update state."""
+    global _last_logged_failure
     channel = _state.channel
     try:
         latest = _fetch_latest_version(channel)
@@ -792,6 +793,7 @@ def _do_check() -> None:
         with _state._lock:
             _state.rate_limit_until = None
         _state._finish_check(latest)
+        _last_logged_failure = None
         logger.info(
             f"[Update] Check complete – installed={_state.current_version} "
             f"latest={latest} channel={channel} has_update={_state.has_update}"
@@ -802,7 +804,22 @@ def _do_check() -> None:
     except Exception as exc:
         msg = str(exc)
         _state._fail_check(msg)
-        logger.warning(f"[Update] Version check failed: {msg}")
+        _log_check_failure(msg)
+
+
+# The last failure logged at warning level. A check that keeps failing the same
+# way (for example a fork's channel that does not exist upstream) repeats every
+# few minutes; log it once, then at debug until the result changes.
+_last_logged_failure: Optional[str] = None
+
+
+def _log_check_failure(msg: str) -> None:
+    global _last_logged_failure
+    if msg == _last_logged_failure:
+        logger.debug(f"[Update] Version check still failing: {msg}")
+        return
+    _last_logged_failure = msg
+    logger.warning(f"[Update] Version check failed: {msg}")
 
 
 def _migrate_service_unit() -> None:

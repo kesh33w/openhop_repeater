@@ -4,6 +4,10 @@ Fork-specific changes to OpenHop Repeater. Upstream changes are in upstream's hi
 
 ## [Unreleased]
 
+### Fixed
+
+- **`agc.reset.interval` now reaches the radios.** The CLI setting (and `repeater.agc_reset_interval`) was saved and shown back, but no radio ever received it. It is now pushed to openHop Modem G2/G3 radios over their HTTP API (`POST /api/config`, `agc_reset_interval_sec`) for each `modem_tcp` radio with a `modem_tcp.http_password_file`; at startup, after a change and every 10 minutes, so a reset or reflashed modem is put back. `get agc.reset.interval` reports each radio's actual value, or `n/a` where the firmware has no AGC reset (USB modems). The password file must be owned by the service user with mode 0600; its contents never reach config, logs or the API.
+
 ## [1.6.0] - 2026-11-22
 
 ### Added

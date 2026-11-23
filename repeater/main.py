@@ -13,6 +13,7 @@ from openhop_core.companion.constants import MAX_PAYLOAD_SIZE as COMPANION_MAX_P
 from openhop_core.companion.radio_capabilities import resolve_max_tx_power_dbm
 from openhop_core.protocol.constants import PAYLOAD_TYPE_RAW_CUSTOM
 
+from repeater.agc_sync import AgcIntervalSync
 from repeater.bridge_homes import validate_bridge_homes, validate_companion_home
 from repeater.cad_radio import apply_cad_settings
 from repeater.companion.utils import (
@@ -698,6 +699,10 @@ class RepeaterDaemon:
                 daemon_instance=self,
             )
             logger.info("Config manager initialized")
+
+            # Push repeater.agc_reset_interval to modems that implement it.
+            self.agc_sync = AgcIntervalSync(self.config)
+            self.agc_sync.start()
 
             self.sensor_manager = SensorManager(self.config)
             self.sensor_manager.start()
@@ -2182,6 +2187,10 @@ class RepeaterDaemon:
             return
         self._shutdown_started = True
         logger.info("Shutdown: stopping services and releasing hardware")
+
+        agc_sync = getattr(self, "agc_sync", None)
+        if agc_sync is not None:
+            agc_sync.stop()
 
         receipts = getattr(self, "bot_rf_receipts", None)
         if receipts is not None:

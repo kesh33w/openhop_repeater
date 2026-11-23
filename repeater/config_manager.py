@@ -501,6 +501,12 @@ class ConfigManager:
             if "logging" in sections:
                 live_update_ok = self._apply_live_logging_config() and live_update_ok
 
+            if "repeater" in sections or "radios" in sections:
+                # repeater.agc_reset_interval or a modem's HTTP credential may have changed.
+                agc_sync = getattr(self.daemon, "agc_sync", None)
+                if agc_sync is not None:
+                    agc_sync.request_sync()
+
             return live_update_ok
 
         except Exception as e:

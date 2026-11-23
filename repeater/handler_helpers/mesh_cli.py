@@ -68,6 +68,17 @@ class MeshCLI:
             self.config_manager.live_update_daemon(sections)
         return True
 
+    def _agc_status(self) -> Optional[str]:
+        """Per-radio AGC reset status from the daemon's sync, or None without one."""
+        daemon = getattr(self.config_manager, "daemon", None)
+        agc_sync = getattr(daemon, "agc_sync", None)
+        if agc_sync is None:
+            return None
+        from repeater.agc_sync import discover
+
+        targets, _ = discover(self.config)
+        return agc_sync.summary() if targets else None
+
     def _get_security_config(self) -> Dict[str, Any]:
         """Return the repeater login security section (the one LoginHelper reads)."""
         security = self.repeater_config.get("security")
@@ -693,7 +704,8 @@ class MeshCLI:
 
         elif param == "agc.reset.interval":
             interval = self.repeater_config.get("agc_reset_interval", 0)
-            return f"> {interval}"
+            status = self._agc_status()
+            return f"> {interval} ({status})" if status else f"> {interval}"
 
         else:
             return f"??: {param}"
@@ -894,7 +906,11 @@ class MeshCLI:
                 self.repeater_config["agc_reset_interval"] = rounded
                 if not self._save_config_and_apply(["repeater"]):
                     return "Error: Failed to save config"
-                return f"OK - interval rounded to {rounded}"
+                # The live update asks the AGC sync to push this to the modems;
+                # "get agc.reset.interval" shows what each one now reports.
+                if self._agc_status() is None:
+                    return f"OK - interval rounded to {rounded} (no radio applies it)"
+                return f"OK - interval rounded to {rounded}, applying to modems"
 
             else:
                 return f"unknown config: {key}"

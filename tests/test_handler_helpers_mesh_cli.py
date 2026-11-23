@@ -237,7 +237,9 @@ def test_cmd_set_updates_and_validation_errors():
     assert cli._cmd_set("direct.txdelay -1") == "Error, must be 0-2"
     assert cli._cmd_set("direct.txdelay 2.5") == "Error, must be 0-2"
 
-    assert cli._cmd_set("agc.reset.interval 10") == "OK - interval rounded to 8"
+    assert (
+        cli._cmd_set("agc.reset.interval 10") == "OK - interval rounded to 8 (no radio applies it)"
+    )
     assert cli._cmd_set("bad") == "Error: Missing value"
     assert cli._cmd_set("tx nope").startswith("Error: invalid value")
     assert cli._cmd_set("unknown.key 1") == "unknown config: unknown.key"

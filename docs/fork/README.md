@@ -12,6 +12,7 @@ All features are opt-in. Changes to anything in `channel_bridge`, `fabric` or `r
   - [Channel translation](#channel-translation)
   - [Protocol transit](#protocol-transit)
   - [Bridge safeguards and live pause](#bridge-safeguards-and-live-pause)
+  - [Per-send policies](#per-send-policies)
   - [Sender markers](#sender-markers)
 - [Multi-radio](#multi-radio)
   - [Network topology, receivers and shadows](#network-topology-receivers-and-shadows)
@@ -81,6 +82,38 @@ These are on whenever the bridge is enabled:
 Crossings use the normal radio queues and airtime accounting. Your own messages delayed by the airtime limit can wait longer than `queue_ttl_seconds`; crossings cannot.
 
 **Pause** (`POST /api/update_bridge_controls {"paused": true}`) is saved first, then applied live without a restart. It also drops crossings already queued. Native local repeating continues. Details: [bridge-reception-evidence.md](../bridge-reception-evidence.md).
+
+### Per-send policies
+
+`channel_bridge.local_policy` and `channel_bridge.crossing_policy` filter each send the bridge plans, after planning. `local_policy` covers a network's own repeats (and direct routes); `crossing_policy` covers copies sent to the other network. Both use the rule format of the upstream policy engine and are **off unless `enabled: true`**; with it off, every send is allowed.
+
+```yaml
+channel_bridge:
+  local_policy:             # example: the 910 side only carries bridged traffic
+    enabled: true
+    default_action: allow   # allow | drop | log_only (log_only behaves like allow)
+    rules:                  # top to bottom; first match wins
+      - id: own_traffic
+        if: {field: local_transmission, op: equals, value: true}
+        then: {action: allow}
+      - id: direct_routes
+        if:
+          all:
+            - {field: tx_radio_id, op: equals, value: g3910}
+            - {field: route_type, op: in, value: [2, 3]}
+        then: {action: allow}
+      - id: no_local_floods
+        if: {field: tx_radio_id, op: equals, value: g3910}
+        then: {action: drop}
+  crossing_policy:
+    enabled: false
+```
+
+- Fields: the send's `tx_radio_id` and `bridge_crossing`, plus the received packet's `rx_radio_id`, `route_type`, `payload_type`, `payload_length`, `path_hash_size`, `hop_count`, `rssi`, `snr`, `local_transmission` and `mode`. Packet fields such as `channel_hash`, `channel_sender`, `path_hashes` and `payload_hex` also work.
+- Operators include `equals`, `not_equals`, `in`, `contains`, `intersects` and the numeric comparisons (`gt`, `gte`, `lt`, `lte`).
+- A packet whose sends are all dropped logs `Channel bridge has no allowed destination`.
+- An invalid `default_action` (or a rule's top-level `action`) stops the repeater from starting. An unknown action under `then:` is only logged and treated as `allow`, so check spelling.
+- Code: `ChannelBridge.plan` in `repeater/channel_bridge.py`, rule evaluation in `repeater/policy_engine.py`.
 
 ### Sender markers
 

@@ -266,7 +266,26 @@ This is the first tagged fork release. It covers everything since the fork's ups
 - Channel keys are never returned by any endpoint, including config export with secrets.
 - Bot receipts compare their HMAC in constant time and fail closed. Secret files are opened with `O_NOFOLLOW` and owner/mode checks.
 
-[Unreleased]: https://github.com/kesh33w/openhop_repeater/compare/kesh-2026.11.18.2...kesh/bridge
+[Unreleased]: https://github.com/kesh33w/openhop_repeater/compare/hydrahop-v1.6.1...kesh/bridge
+[1.6.1]: https://github.com/kesh33w/openhop_repeater/compare/hydrahop-v1.6.0...hydrahop-v1.6.1
+[1.6.0]: https://github.com/kesh33w/openhop_repeater/compare/hydrahop-v1.5.2...hydrahop-v1.6.0
+[1.5.2]: https://github.com/kesh33w/openhop_repeater/compare/hydrahop-v1.5.1...hydrahop-v1.5.2
+[1.5.1]: https://github.com/kesh33w/openhop_repeater/compare/hydrahop-v1.5.0...hydrahop-v1.5.1
+[1.5.0]: https://github.com/kesh33w/openhop_repeater/compare/hydrahop-v1.4.2...hydrahop-v1.5.0
+[1.4.2]: https://github.com/kesh33w/openhop_repeater/compare/hydrahop-v1.4.1...hydrahop-v1.4.2
+[1.4.1]: https://github.com/kesh33w/openhop_repeater/compare/hydrahop-v1.4.0...hydrahop-v1.4.1
+[1.4.0]: https://github.com/kesh33w/openhop_repeater/compare/hydrahop-v1.3.3...hydrahop-v1.4.0
+[1.3.3]: https://github.com/kesh33w/openhop_repeater/compare/hydrahop-v1.3.2...hydrahop-v1.3.3
+[1.3.2]: https://github.com/kesh33w/openhop_repeater/compare/hydrahop-v1.3.1...hydrahop-v1.3.2
+[1.3.1]: https://github.com/kesh33w/openhop_repeater/compare/hydrahop-v1.3.0...hydrahop-v1.3.1
+[1.3.0]: https://github.com/kesh33w/openhop_repeater/compare/hydrahop-v1.2.0...hydrahop-v1.3.0
+[1.2.0]: https://github.com/kesh33w/openhop_repeater/compare/hydrahop-v1.1.0...hydrahop-v1.2.0
+[1.1.0]: https://github.com/kesh33w/openhop_repeater/compare/hydrahop-v1.0.3...hydrahop-v1.1.0
+[1.0.3]: https://github.com/kesh33w/openhop_repeater/compare/hydrahop-v1.0.2...hydrahop-v1.0.3
+[1.0.2]: https://github.com/kesh33w/openhop_repeater/compare/hydrahop-v1.0.1...hydrahop-v1.0.2
+[1.0.1]: https://github.com/kesh33w/openhop_repeater/compare/hydrahop-v1.0.0...hydrahop-v1.0.1
+[1.0.0]: https://github.com/kesh33w/openhop_repeater/compare/kesh-2026.11.19...hydrahop-v1.0.0
+[kesh-2026.11.19]: https://github.com/kesh33w/openhop_repeater/compare/kesh-2026.11.18.2...kesh-2026.11.19
 [kesh-2026.11.18.2]: https://github.com/kesh33w/openhop_repeater/compare/kesh-2026.11.18.1...kesh-2026.11.18.2
 [kesh-2026.11.18.1]: https://github.com/kesh33w/openhop_repeater/compare/kesh-2026.11.18...kesh-2026.11.18.1
 [kesh-2026.11.18]: https://github.com/kesh33w/openhop_repeater/compare/72266e2...kesh-2026.11.18

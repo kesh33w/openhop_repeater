@@ -8,6 +8,7 @@ from typing import Any, Callable, Dict, Optional
 import openhop_core
 
 from repeater import __version__ as repeater_version
+from repeater.config import AGC_RESET_INTERVAL_MAX_SEC, agc_reset_interval_error
 
 logger = logging.getLogger(__name__)
 
@@ -78,6 +79,29 @@ class MeshCLI:
 
         targets, _ = discover(self.config)
         return agc_sync.summary() if targets else None
+
+    # CLI key -> (get_fem_state key, KissModemWrapper capability check)
+    _FEM_KEYS = {
+        "radio.fem.rxgain": ("rx_gain", "supports_fem_rx_gain"),
+        "radio.fem.txgain": ("tx_gain", "supports_fem_tx_gain"),
+    }
+
+    def _kiss_radio(self, capability: str):
+        """The default radio when it reports ``capability``, else None.
+
+        AGC/FEM commands are applied to the modem first and persisted only once it
+        confirms, so "OK" never describes a setting the radio is not running.
+        """
+        getter = getattr(self.config_manager, "default_physical_radio", None)
+        radio = getter() if callable(getter) else None
+        check = getattr(radio, capability, None)
+        if not callable(check):
+            return None
+        try:
+            return radio if check() else None
+        except Exception as e:
+            logger.warning(f"Radio capability check {capability} failed: {e}")
+            return None
 
     def _get_security_config(self) -> Dict[str, Any]:
         """Return the repeater login security section (the one LoginHelper reads)."""
@@ -384,7 +408,10 @@ class MeshCLI:
             "  get direct.txdelay  Direct TX delay factor",
             "  get multi.acks      Multi-ack count",
             "  get int.thresh      Interference threshold",
-            "  get agc.reset.interval  AGC reset interval",
+            "  get agc.reset.interval  AGC reset interval (default radio)",
+            "  get radio.fem.rxgain  External FEM RX gain (default radio)",
+            "  get radio.fem.txgain  External FEM TX gain (default radio)",
+            "  get radio.rxgain    Radio chip boosted RX gain (default radio)",
             "",
             "Set:  (use 'help set' for details)",
             "  set <param> <value>",
@@ -431,7 +458,11 @@ class MeshCLI:
                 "  set direct.txdelay <val>  Direct TX delay (0-2)\n"
                 "  set multi.acks <n>     Multi-ack count\n"
                 "  set int.thresh <dbm>   Interference threshold\n"
-                "  set agc.reset.interval <n>  AGC reset (rounded to x4)"
+                "  set agc.reset.interval <n>  AGC reset secs (0=off; default radio)\n"
+                "    KISS: 0-1020, rounded down to 4 s; OpenHop modem: 0-3600, 1 s steps\n"
+                "  set radio.fem.rxgain on|off  External FEM RX gain (default radio)\n"
+                "  set radio.fem.txgain on|off  External FEM TX gain (default radio)\n"
+                "  set radio.rxgain on|off  Radio chip boosted RX gain (default radio)"
             ),
             "get": "Get commands \u2014 type 'help' to see all 'get' parameters.",
             "reboot": "Restart the repeater service via systemd.",
@@ -703,9 +734,38 @@ class MeshCLI:
             return f"> {thresh}"
 
         elif param == "agc.reset.interval":
+            # A modem that takes AGC over its frame protocol is read directly.
+            radio = self._kiss_radio("supports_agc_reset_control")
+            if radio is not None:
+                interval = radio.get_agc_reset_interval()
+                if interval is None:
+                    return "Error: no response from radio"
+                return f"> {interval}"
+            # Otherwise HydraHop's setting, with what the HTTP AGC sync reports.
             interval = self.repeater_config.get("agc_reset_interval", 0)
             status = self._agc_status()
             return f"> {interval} ({status})" if status else f"> {interval}"
+
+        elif param in self._FEM_KEYS:
+            state_key, supports = self._FEM_KEYS[param]
+            radio = self._kiss_radio(supports)
+            if radio is None:
+                return "Error: unsupported"
+            state = radio.get_fem_state()
+            if state is None:
+                return "Error: no response from radio"
+            if state.get(state_key) is None:
+                return "Error: unsupported"
+            return f"> {'on' if state[state_key] else 'off'}"
+
+        elif param == "radio.rxgain":
+            radio = self._kiss_radio("supports_rx_boosted_gain")
+            if radio is None:
+                return "Error: unsupported"
+            boosted = radio.get_rx_boosted_gain()
+            if boosted is None:
+                return "Error: no response from radio"
+            return f"> {'on' if boosted else 'off'}"
 
         else:
             return f"??: {param}"
@@ -901,16 +961,71 @@ class MeshCLI:
 
             elif key == "agc.reset.interval":
                 interval = int(value)
-                # Round to nearest multiple of 4
-                rounded = (interval // 4) * 4
-                self.repeater_config["agc_reset_interval"] = rounded
-                if not self._save_config_and_apply(["repeater"]):
-                    return "Error: Failed to save config"
-                # The live update asks the AGC sync to push this to the modems;
-                # "get agc.reset.interval" shows what each one now reports.
-                if self._agc_status() is None:
-                    return f"OK - interval rounded to {rounded} (no radio applies it)"
-                return f"OK - interval rounded to {rounded}, applying to modems"
+                if interval < 0 or interval > AGC_RESET_INTERVAL_MAX_SEC:
+                    return f"Error: must be 0-{AGC_RESET_INTERVAL_MAX_SEC}"
+                radio = self._kiss_radio("supports_agc_reset_control")
+                if radio is None:
+                    # No frame-protocol AGC on the default radio: keep HydraHop's
+                    # repeater-wide setting, which the HTTP AGC sync pushes.
+                    # Round to nearest multiple of 4
+                    rounded = (interval // 4) * 4
+                    self.repeater_config["agc_reset_interval"] = rounded
+                    if not self._save_config_and_apply(["repeater"]):
+                        return "Error: Failed to save config"
+                    # The live update asks the AGC sync to push this to the modems;
+                    # "get agc.reset.interval" shows what each one now reports.
+                    if self._agc_status() is None:
+                        return f"OK - interval rounded to {rounded} (no radio applies it)"
+                    return f"OK - interval rounded to {rounded}, applying to modems"
+                error = agc_reset_interval_error(radio, interval)
+                if error:
+                    return f"Error: {error}"
+                try:
+                    effective = radio.set_agc_reset_interval(interval)
+                except ValueError:
+                    return "Error: radio did not apply setting"
+                if effective is None:
+                    return "Error: radio did not apply setting"
+                if not self.config_manager.persist_default_kiss_settings(
+                    {"agc_reset_interval_seconds": effective}
+                ):
+                    return "Error: applied to radio but failed to save config"
+                if effective != interval:
+                    return f"OK - interval now {effective}"
+                return "OK"
+
+            elif key in self._FEM_KEYS:
+                if value not in ("on", "off"):
+                    return "Error: must be on or off"
+                state_key, supports = self._FEM_KEYS[key]
+                radio = self._kiss_radio(supports)
+                if radio is None:
+                    return "Error: unsupported"
+                enabled = value == "on"
+                setter = radio.set_fem_rx_gain if state_key == "rx_gain" else radio.set_fem_tx_gain
+                if not setter(enabled):
+                    return "Error: radio did not apply setting"
+                if not self.config_manager.persist_default_kiss_settings(
+                    {f"fem_{state_key}": enabled}
+                ):
+                    return "Error: applied to radio but failed to save config"
+                return "OK"
+
+            elif key == "radio.rxgain":
+                # The radio chip's boosted RX gain; radio.fem.rxgain is the external LNA.
+                if value not in ("on", "off"):
+                    return "Error: must be on or off"
+                radio = self._kiss_radio("supports_rx_boosted_gain")
+                if radio is None:
+                    return "Error: unsupported"
+                enabled = value == "on"
+                if radio.set_rx_boosted_gain(enabled) != enabled:
+                    return "Error: radio did not apply setting"
+                if not self.config_manager.persist_default_kiss_settings(
+                    {"rx_boosted_gain": enabled}
+                ):
+                    return "Error: applied to radio but failed to save config"
+                return "OK"
 
             else:
                 return f"unknown config: {key}"

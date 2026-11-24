@@ -4,6 +4,10 @@ Fork-specific changes to OpenHop Repeater. Upstream changes are in upstream's hi
 
 ## [Unreleased]
 
+### Added
+
+- **RF front-end controls for every radio, not only the default.** `/api/radio_frontend` takes `radio_id`, and the CLI takes an optional radio id: `get|set agc.reset.interval [radio_id]`, `radio.fem.rxgain`, `radio.fem.txgain` and `radio.rxgain`. Settings are saved in that radio's `radios[]` entry. Upstream PR openhop-dev/openhop_repeater#561 by agessaman. HydraHop difference: without a radio id, `agc.reset.interval` still falls back to the repeater-wide setting and HTTP AGC sync when the default radio has no frame AGC; with a radio id it answers `Error: unsupported`.
+
 ## [1.7.0] - 2026-11-24
 
 ### Added

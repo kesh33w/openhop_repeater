@@ -4,7 +4,14 @@ Fork-specific changes to OpenHop Repeater. Upstream changes are in upstream's hi
 
 ## [Unreleased]
 
+### Added
+
+- **Upstream OpenHop dev merged (7 Nov 2026).** Brings upstream's AGC reset, FEM gain and RX-boost control over the openHop Modem frame protocol (openhop_modem firmware v1.4.2 or later; `modem_tcp:`/`modem_usb:` `agc_reset_interval_seconds`, `fem_rx_gain`, `fem_tx_gain`, `rx_boosted_gain`), `/api/radio_frontend`, CLI `radio.fem.*` and `radio.rxgain`, companion message history, network and per-broker MQTT usage on System Stats, and upstream's DM ACK and login route fixes. Settings now also apply at startup, not only after a reconnect.
+
 ### Changed
+
+- **`agc.reset.interval` uses the modem's own control when it has one.** If the default radio supports frame-protocol AGC, the CLI reads and sets it there and saves it under that radio's section. Otherwise (current G3 firmware) it keeps the repeater-wide setting and the HTTP AGC sync, as in 1.6.1. `repeater.agc_reset_interval` is also applied to every modem whose firmware supports frame AGC.
+- **The web UI bundle records its source.** `repeater/web/html/frontend-build.json` lists the UI commit and every bundled file's SHA-256; `scripts/check_frontend_bundle.py` and the tests verify it.
 
 - **Old web UI bundles are pruned.** Every UI rebuild kept all earlier hashed assets, so `repeater/web/html/assets` had grown to 657 files (56 MB) in each checkout and Pi release directory. `scripts/prune_web_assets.py` now keeps only the current build's assets and those of the two previous UI bundles (enough for a browser tab left open across an upgrade); this release drops 501 files (40.6 MB). A test checks that every asset the current `index.html` reaches is present.
 

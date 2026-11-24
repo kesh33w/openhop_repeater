@@ -4,7 +4,7 @@
 |---|---|
 | Upstream | https://github.com/openhop-dev/openhop_repeater |
 | Upstream branch tracked | `dev` |
-| Last merged upstream commit | `72266e2` (27 Oct 2026, "fix(api): accept RRD query parameters during HTTP dispatch") |
+| Last merged upstream commit | `9844406` (7 Nov 2026, "Merge pull request #492 from agessaman/feat/kiss-agc-fem-control") |
 | Fork main line | `kesh/bridge` |
 
 The fork merges upstream; it never rebases. History on `kesh/bridge` is never rewritten.

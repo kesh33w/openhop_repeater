@@ -61,6 +61,7 @@ npx vite build          # writes ../openhop_repeater/repeater/web/html
 cd ../openhop_repeater
 git ls-files -d repeater/web/html | xargs -r git checkout --   # restore older hashed assets
 python3 scripts/prune_web_assets.py --apply                    # then drop the ones no longer needed
+python3 scripts/check_frontend_bundle.py --record-source ../openHop_RepeaterUI   # inventory + UI commit
 git add -A repeater/web/html && git commit -m "Bundle <what> from UI <ui-commit>"
 ```
 

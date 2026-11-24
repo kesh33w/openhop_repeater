@@ -9,7 +9,7 @@ import shutil
 import subprocess  # nosec B404 - maintainer-only CLI uses read-only Git commands, no shell
 from pathlib import Path
 
-REPOSITORY = "https://github.com/openhop-dev/openHop_RepeaterUI"
+REPOSITORY = "https://github.com/kesh33w/openHop_RepeaterUI"  # HydraHop builds from the fork
 MANIFEST = "frontend-build.json"
 DEFAULT_ROOT = Path(__file__).resolve().parents[1] / "repeater/web/html"
 

@@ -10,7 +10,7 @@ Everything the fork adds is **opt-in**. With none of the fork's configuration se
 |---|---|
 | **Main line** | [`kesh/bridge`](https://github.com/kesh33w/openhop_repeater/tree/kesh/bridge): what runs in production |
 | **Releases** | Released together as **HydraHop** (`hydrahop-vX.Y.Z` tags). Current version and pins: [hydrahop](https://github.com/kesh33w/hydrahop#readme). Changes: [CHANGELOG.md](CHANGELOG.md) |
-| **Upstream base** | `openhop-dev/openhop_repeater` `dev` at `72266e2` (27 Oct 2026): see [syncing with upstream](docs/fork/upstream-sync.md) |
+| **Upstream base** | `openhop-dev/openhop_repeater` `dev` at `9844406` (7 Nov 2026): see [syncing with upstream](docs/fork/upstream-sync.md) |
 | **Upstream docs** | [UPSTREAM-README.md](UPSTREAM-README.md): installers, radio support, dashboard, plugins |
 
 ## What this fork changes

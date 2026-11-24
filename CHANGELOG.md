@@ -4,6 +4,12 @@ Fork-specific changes to OpenHop Repeater. Upstream changes are in upstream's hi
 
 ## [Unreleased]
 
+## [1.8.1] - 2026-11-24
+
+### Fixed
+
+- **Companions no longer miss messages that another receiver heard first.** A companion set to listen on some of a network's radios (`receive_radio_ids: [g3910]`) lost every packet that a different radio of the same network heard first: the dispatcher drops the later, byte-identical copy as a duplicate, so the listed radio's copy never reached the companion. On the Pi the RAK receivers hear most direct traffic first (on 910, about 80% of direct messages over 24 h), so DMs, ACKs and login replies to such companions went missing. `receive_radio_ids` now covers every non-shadow radio of each listed radio's network, the same set `receive_network` gives; startup logs the radios added. Shadow radios are still heard only when listed.
+
 ## [1.8.0] - 2026-11-24
 
 ### Added

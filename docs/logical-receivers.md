@@ -20,7 +20,7 @@ home_radio_id: directional_a
 receive_network: network_a
 ```
 
-Home must be that network's designated transmitter. Other networks and shadows are excluded. Existing channel, authentication, command and rate-limit policies still apply; legacy allowlists remain supported.
+Home must be that network's designated transmitter. Other networks and shadows are excluded. Existing channel, authentication, command and rate-limit policies still apply; legacy allowlists remain supported. A legacy allowlist covers whole networks: each listed non-shadow radio brings in every non-shadow radio of its network, because identical copies are deduplicated per network before companions see them, so listening on only one ear would lose whatever another ear heard first (fixed in HydraHop 1.8.1). Shadows are heard only when listed.
 
 To add an ear, configure a unique physical radio with compatible air parameters and the same network. Verify it as a shadow before promoting it to `receiver` under the existing forwarding policy. Restart with rollback protection: live topology replacement with subscribers is rejected. Consumer membership lists need no changes. Tests cover three active ears on each of two networks. Additional receivers never acquire TX ownership.
 

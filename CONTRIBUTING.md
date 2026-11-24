@@ -59,11 +59,12 @@ cd ../openHop_RepeaterUI
 npm ci && npm run api:generate && npx vitest run && npx vue-tsc --build
 npx vite build          # writes ../openhop_repeater/repeater/web/html
 cd ../openhop_repeater
-git ls-files -d repeater/web/html | xargs -r git checkout --   # keep older hashed assets
-git add repeater/web/html && git commit -m "Bundle <what> from UI <ui-commit>"
+git ls-files -d repeater/web/html | xargs -r git checkout --   # restore older hashed assets
+python3 scripts/prune_web_assets.py --apply                    # then drop the ones no longer needed
+git add -A repeater/web/html && git commit -m "Bundle <what> from UI <ui-commit>"
 ```
 
-Previously built hashed assets are kept, so a browser tab left open during an upgrade can still load its chunks.
+Older hashed assets are kept so a browser tab left open during an upgrade can still load its chunks, but only those of the current build and of the two previous UI bundles in `hydrahop-v*` tags (`--keep-releases`). Run the script without `--apply` to see what it would delete. `tests/test_web_assets_complete.py` fails if the current build references an asset that is missing.
 
 ## Commit messages
 

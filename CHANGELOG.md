@@ -4,6 +4,10 @@ Fork-specific changes to OpenHop Repeater. Upstream changes are in upstream's hi
 
 ## [Unreleased]
 
+### Changed
+
+- **Old web UI bundles are pruned.** Every UI rebuild kept all earlier hashed assets, so `repeater/web/html/assets` had grown to 657 files (56 MB) in each checkout and Pi release directory. `scripts/prune_web_assets.py` now keeps only the current build's assets and those of the two previous UI bundles (enough for a browser tab left open across an upgrade); this release drops 501 files (40.6 MB). A test checks that every asset the current `index.html` reaches is present.
+
 ## [1.6.1] - 2026-11-23
 
 ### Fixed

@@ -4,6 +4,8 @@ Fork-specific changes to OpenHop Repeater. Upstream changes are in upstream's hi
 
 ## [Unreleased]
 
+## [1.8.0] - 2026-11-24
+
 ### Added
 
 - **RF front-end controls for every radio, not only the default.** `/api/radio_frontend` takes `radio_id`, and the CLI takes an optional radio id: `get|set agc.reset.interval [radio_id]`, `radio.fem.rxgain`, `radio.fem.txgain` and `radio.rxgain`. Settings are saved in that radio's `radios[]` entry. Upstream PR openhop-dev/openhop_repeater#561 by agessaman. HydraHop difference: without a radio id, `agc.reset.interval` still falls back to the repeater-wide setting and HTTP AGC sync when the default radio has no frame AGC; with a radio id it answers `Error: unsupported`.
@@ -286,7 +288,8 @@ This is the first tagged fork release. It covers everything since the fork's ups
 - Channel keys are never returned by any endpoint, including config export with secrets.
 - Bot receipts compare their HMAC in constant time and fail closed. Secret files are opened with `O_NOFOLLOW` and owner/mode checks.
 
-[Unreleased]: https://github.com/kesh33w/openhop_repeater/compare/hydrahop-v1.7.0...kesh/bridge
+[Unreleased]: https://github.com/kesh33w/openhop_repeater/compare/hydrahop-v1.8.0...kesh/bridge
+[1.8.0]: https://github.com/kesh33w/openhop_repeater/compare/hydrahop-v1.7.0...hydrahop-v1.8.0
 [1.7.0]: https://github.com/kesh33w/openhop_repeater/compare/hydrahop-v1.6.1...hydrahop-v1.7.0
 [1.6.1]: https://github.com/kesh33w/openhop_repeater/compare/hydrahop-v1.6.0...hydrahop-v1.6.1
 [1.6.0]: https://github.com/kesh33w/openhop_repeater/compare/hydrahop-v1.5.2...hydrahop-v1.6.0

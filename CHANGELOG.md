@@ -4,6 +4,10 @@ Fork-specific changes to OpenHop Repeater. Upstream changes are in upstream's hi
 
 ## [Unreleased]
 
+### Fixed
+
+- **The node's own packets are no longer published to MQTT as receptions.** Packets this node or its companions (such as KeshBot) send carry no signal reading, and went to the brokers as `rx` at RSSI 0 and zero hops, which maps read as a 0 dBm direct reception. A packet is now published only if it has an RSSI or SNR reading. It is still stored and shown locally. About 0.3% of the Pi's packets (roughly 100 a day). Upstream PR openhop-dev/openhop_repeater#490 by obrint.
+
 ## [1.7.0] - 2026-11-24
 
 ### Added

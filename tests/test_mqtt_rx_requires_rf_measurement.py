@@ -24,6 +24,7 @@ def _collector() -> tuple:
     """A StorageCollector carrying only the fields _publish_packet_to_mqtt touches."""
     collector = object.__new__(StorageCollector)
     collector.config = {"repeater": {"node_name": "test-node"}}
+    collector._multi_radio = False
     collector.mqtt_handler = MagicMock()
     collector.mqtt_handler.public_key = "AB" * 32
     return collector, collector.mqtt_handler

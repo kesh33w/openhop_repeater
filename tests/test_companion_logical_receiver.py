@@ -157,3 +157,38 @@ def test_third_active_ear_joins_without_companion_configuration_change(logical):
     router = PacketRouter(daemon)
     router._policy_blocks_companion = lambda p, m: False
     assert router._companion_bridges_for_packet(packet(), {"rx_radio_id": "third909"}) == {1: bot}
+
+
+@pytest.mark.parametrize(
+    ("listed", "expected"),
+    [
+        (["local"], {"local", "omni909"}),
+        (["omni909"], {"local", "omni909"}),
+        (["local", "link"], {"local", "omni909", "link", "omni910"}),
+        (["rak"], {"rak"}),
+    ],
+)
+def test_receive_radio_ids_cover_whole_network(logical, listed, expected):
+    """A frame is delivered once per network (identical bytes are deduplicated
+    across that network's radios), so listening on one radio of a network
+    would lose every frame another of its receivers heard first."""
+    daemon, _, _ = logical
+    bot = SimpleNamespace()
+    daemon._configure_companion_routing(
+        bot, {"home_radio_id": "local", "receive_radio_ids": listed}
+    )
+    assert companion_receive_members(bot) == frozenset(expected)
+
+
+def test_single_radio_companion_gets_copy_heard_first_by_other_receiver(logical):
+    daemon, _, _ = logical
+    bot = SimpleNamespace()
+    daemon._configure_companion_routing(
+        bot, {"home_radio_id": "local", "receive_radio_ids": ["local"]}
+    )
+    daemon.companion_bridges = {1: bot}
+    router = PacketRouter(daemon)
+    router._policy_blocks_companion = lambda p, m: False
+    # omni909 heard it first; the dispatcher drops local's identical copy.
+    assert router._companion_bridges_for_packet(packet(), {"rx_radio_id": "omni909"}) == {1: bot}
+    assert router._companion_bridges_for_packet(packet(), {"rx_radio_id": "omni910"}) == {}

@@ -22,6 +22,7 @@ from repeater.companion.utils import (
     companion_receive_members,
     effective_max_contacts,
     enforce_companion_contact_capacity,
+    expand_receive_radio_ids,
     format_companion_bridge_limits,
     normalize_companion_identity_key,
     parse_companion_bridge_kwargs,
@@ -982,7 +983,17 @@ class RepeaterDaemon:
                 or any(not isinstance(r, str) or r not in known for r in receive)
             ):
                 raise ValueError("Companion receive_radio_ids must name configured radios")
-            receive = frozenset(receive)
+            receive = expand_receive_radio_ids(
+                receive, getattr(getattr(self.radio, "fabric", None), "topology", None)
+            )
+            if receive != frozenset(settings["receive_radio_ids"]):
+                logger.info(
+                    "Companion receive_radio_ids %s also hear %s: copies are merged per "
+                    "network before delivery, so every receiver of a listed radio's "
+                    "network must be an ear",
+                    sorted(settings["receive_radio_ids"]),
+                    sorted(receive - set(settings["receive_radio_ids"])),
+                )
         bridge._receive_network = None
         bridge._receive_home_radio_id = None
         bridge._receive_fabric = None

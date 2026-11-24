@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Mapping
 from typing import Any, Dict, Optional
 
 from openhop_core.companion.constants import DEFAULT_MAX_CONTACTS
@@ -314,6 +315,28 @@ def companion_receive_members(bridge):
             return frozenset()
     receive = getattr(bridge, "_receive_radio_ids", None)
     return receive if isinstance(receive, frozenset) else None
+
+
+def expand_receive_radio_ids(radio_ids, topology) -> frozenset:
+    """Widen a companion's ``receive_radio_ids`` to whole networks.
+
+    The dispatcher merges the copies of one frame heard by the radios of a
+    network (identical bytes are deduplicated per network) before companions
+    see them. A companion listening on only some of those radios would lose
+    every frame another radio of the network heard first, so each listed
+    non-shadow radio brings in every non-shadow radio of its network. Shadow
+    radios are kept only when listed and never widen the set; radios outside
+    the topology are kept as given.
+    """
+    ids = set(radio_ids)
+    members = getattr(topology, "members", None)
+    if not isinstance(members, Mapping):
+        return frozenset(ids)
+    networks = {members[rid][0] for rid in ids if rid in members and members[rid][1] != "shadow"}
+    for rid, (network, role) in members.items():
+        if network in networks and role != "shadow":
+            ids.add(rid)
+    return frozenset(ids)
 
 
 def companion_accepts_radio(bridge, radio_id):

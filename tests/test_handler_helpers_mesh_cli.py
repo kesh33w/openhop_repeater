@@ -1,3 +1,4 @@
+import copy
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
@@ -788,6 +789,131 @@ def _kiss_cli(radio, cfg=None, save_ok=True):
     return MeshCLI("/tmp/cfg.yaml", cfg, mgr), cfg, mgr
 
 
+def _frontend_fabric_cli():
+    narrow, g2 = FakeKissRadio(), FakeKissRadio()
+    cfg = _base_config()
+    cfg.update(
+        {
+            "radio_type": "kiss",
+            "kiss": {"port": "/dev/narrow"},
+            "radios": [
+                {"id": "narrow", "radio_type": "kiss"},
+                {"id": "g2", "radio_type": "modem_tcp", "modem_tcp": {"host": "g2"}},
+            ],
+            # An edited default takes effect at restart; the running default is narrow.
+            "fabric": {"default_radio": "g2"},
+        }
+    )
+    fabric = SimpleNamespace(radios={"narrow": narrow, "g2": g2}, default_radio_id="narrow")
+    cli, cfg, mgr = _kiss_cli(SimpleNamespace(_radio=SimpleNamespace(fabric=fabric)), cfg)
+    return cli, cfg, mgr, narrow, g2
+
+
+_FRONTEND_COMMANDS = [
+    (
+        "agc.reset.interval",
+        "10",
+        "agc_reset_interval_seconds",
+        8,
+        "> 32",
+        "> 8",
+        "OK - interval now 8",
+    ),
+    ("radio.fem.rxgain", "on", "fem_rx_gain", True, "> off", "> on", "OK"),
+    ("radio.fem.txgain", "on", "fem_tx_gain", True, "> off", "> on", "OK"),
+    ("radio.rxgain", "off", "rx_boosted_gain", False, "> on", "> off", "OK"),
+]
+
+
+@pytest.mark.parametrize("key,value,setting,effective,before,after,reply", _FRONTEND_COMMANDS)
+@pytest.mark.parametrize("radio_id", [None, "g2", "narrow"])
+def test_frontend_commands_select_and_persist_one_radio(
+    key, value, setting, effective, before, after, reply, radio_id
+):
+    cli, cfg, mgr, narrow, g2 = _frontend_fabric_cli()
+    suffix = f" {radio_id}" if radio_id else ""
+    index, section = (1, "modem_tcp") if radio_id == "g2" else (0, "kiss")
+    other = narrow if radio_id == "g2" else g2
+    other_before = copy.deepcopy(vars(other))
+    config_before = copy.deepcopy(cfg)
+
+    assert cli._cmd_get(f"{key}{suffix}") == before
+    assert cli._cmd_set(f"{key} {value}{suffix}") == reply
+    assert cli._cmd_get(f"{key}{suffix}") == after
+    assert cfg["radios"][index][section][setting] == effective
+    assert vars(other) == other_before
+    assert cfg["radios"][1 - index] == config_before["radios"][1 - index]
+    assert cfg["kiss"] == config_before["kiss"]
+    assert cfg["repeater"] == config_before["repeater"]
+    mgr.save_to_file.assert_called_once_with()
+
+
+@pytest.mark.parametrize("key,value,setting,effective,before,after,reply", _FRONTEND_COMMANDS)
+@pytest.mark.parametrize("single_radio", [False, True])
+def test_frontend_commands_reject_unknown_ids_without_changes(
+    key, value, setting, effective, before, after, reply, single_radio
+):
+    if single_radio:
+        radio = FakeKissRadio()
+        cli, cfg, mgr = _kiss_cli(radio)
+        radios = [radio]
+        known = "none (single-radio node)"
+    else:
+        cli, cfg, mgr, narrow, g2 = _frontend_fabric_cli()
+        radios = [narrow, g2]
+        known = "narrow, g2"
+    config_before = copy.deepcopy(cfg)
+    radios_before = [copy.deepcopy(vars(radio)) for radio in radios]
+    error = f"Error: unknown radio id 'missing'; known ids: {known}"
+
+    assert cli._cmd_get(f"{key} missing") == error
+    assert cli._cmd_set(f"{key} {value} missing") == error
+    assert cfg == config_before
+    assert [vars(radio) for radio in radios] == radios_before
+    mgr.save_to_file.assert_not_called()
+
+
+@pytest.mark.parametrize("key,value,setting,effective,before,after,reply", _FRONTEND_COMMANDS)
+def test_frontend_commands_name_a_configured_radio_that_is_not_running(
+    key, value, setting, effective, before, after, reply
+):
+    cli, cfg, mgr, narrow, g2 = _frontend_fabric_cli()
+    # g2 is in radios[] but the running fabric was started without it.
+    del cli.config_manager.daemon.radio._radio.fabric.radios["g2"]
+    config_before = copy.deepcopy(cfg)
+    error = "Error: radio 'g2' is configured but not running (restart to apply radios[] changes)"
+
+    assert cli._cmd_get(f"{key} g2") == error
+    assert cli._cmd_set(f"{key} {value} g2") == error
+    assert cfg == config_before
+    mgr.save_to_file.assert_not_called()
+
+
+def test_frontend_agc_validates_the_selected_radios_range():
+    cli, cfg, mgr, narrow, g2 = _frontend_fabric_cli()
+    g2.effective_agc_reset_interval = lambda seconds: seconds if 0 <= seconds <= 60 else None
+    g2.set_agc_reset_interval = MagicMock()
+    before = copy.deepcopy(cfg)
+
+    assert cli._cmd_set("agc.reset.interval 64 g2") == (
+        "Error: AGC reset interval 64 is outside this radio's range (0-60 seconds)"
+    )
+    assert cli._cmd_set("agc.reset.interval 3601 g2") == "Error: must be 0-3600"
+    g2.set_agc_reset_interval.assert_not_called()
+    assert narrow.agc == 32
+    assert cfg == before
+    mgr.save_to_file.assert_not_called()
+
+
+@pytest.mark.parametrize("key", ["radio.fem.rxgain", "radio.fem.txgain", "radio.rxgain"])
+def test_frontend_gain_with_id_still_requires_on_or_off(key):
+    cli, cfg, mgr, narrow, g2 = _frontend_fabric_cli()
+    before = copy.deepcopy(cfg)
+    assert cli._cmd_set(f"{key} maybe g2") == "Error: must be on or off"
+    assert cfg == before
+    mgr.save_to_file.assert_not_called()
+
+
 def test_agc_get_reads_the_running_modem_not_config():
     radio = FakeKissRadio()
     cli, cfg, _ = _kiss_cli(radio)
@@ -1212,3 +1338,16 @@ def test_ver_survives_a_core_without_a_version(monkeypatch):
     monkeypatch.delattr(openhop_core, "__version__", raising=False)
     cli = MeshCLI("/tmp/cfg.yaml", _base_config(), _cfg_mgr(), identity_type="repeater")
     assert cli.handle_command(b"\x00" * 32, "ver", True).endswith("(core vunknown)")
+
+
+def test_agc_on_a_named_radio_without_frame_agc_is_unsupported():
+    # HydraHop falls back to the repeater-wide HTTP AGC setting only when no radio
+    # is named; a named radio that cannot take frame AGC must not change it.
+    cli, cfg, mgr, narrow, g2 = _frontend_fabric_cli()
+    g2.supports_agc_reset_control = lambda: False
+    before = copy.deepcopy(cfg)
+
+    assert cli._cmd_get("agc.reset.interval g2") == "Error: unsupported"
+    assert cli._cmd_set("agc.reset.interval 8 g2") == "Error: unsupported"
+    assert cfg == before
+    mgr.save_to_file.assert_not_called()

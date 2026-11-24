@@ -8,6 +8,10 @@ Fork-specific changes to OpenHop Repeater. Upstream changes are in upstream's hi
 
 - **RF front-end controls for every radio, not only the default.** `/api/radio_frontend` takes `radio_id`, and the CLI takes an optional radio id: `get|set agc.reset.interval [radio_id]`, `radio.fem.rxgain`, `radio.fem.txgain` and `radio.rxgain`. Settings are saved in that radio's `radios[]` entry. Upstream PR openhop-dev/openhop_repeater#561 by agessaman. HydraHop difference: without a radio id, `agc.reset.interval` still falls back to the repeater-wide setting and HTTP AGC sync when the default radio has no frame AGC; with a radio id it answers `Error: unsupported`.
 
+### Fixed
+
+- **The node's own packets are no longer published to MQTT as receptions.** Packets this node or its companions (such as KeshBot) send carry no signal reading, and went to the brokers as `rx` at RSSI 0 and zero hops, which maps read as a 0 dBm direct reception. A packet is now published only if it has an RSSI or SNR reading. It is still stored and shown locally. About 0.3% of the Pi's packets (roughly 100 a day). Upstream PR openhop-dev/openhop_repeater#490 by obrint.
+
 ## [1.7.0] - 2026-11-24
 
 ### Added

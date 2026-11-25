@@ -146,7 +146,9 @@ fabric:
     enable_receiver_forwarding: true
 ```
 
-Every reception keeps its physical radio id ("provenance") and its network. Duplicate suppression, echo detection and companion receive filters are per network. Radios on one network must share air settings; the two networks must use different frequencies.
+Every reception keeps its physical radio id ("provenance") and its network. Duplicate suppression, echo detection and companion receive filters are per network. Radios on one network must share air settings, and each network must use its own frequency.
+
+A topology may name more than two networks (for example SMF, SFO and a temporary LAX 927 network). Each network still has one TX radio. Channel-bridge `mappings` decide what crosses and to which network, per source→target radio pair; a packet whose channel is mapped to several networks crosses once to each. Bridge flood limits (`traffic_limits`) apply per direction, so N networks have N×(N−1) directions. Direct routes stay one target per source radio.
 
 Details:
 - [logical-receivers.md](../logical-receivers.md);

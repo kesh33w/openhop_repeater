@@ -31,9 +31,10 @@ class DirectionalTrafficGuard:
     native send is covered by its original admission. Limits reset on restart.
     """
 
-    def __init__(self, limits=None, *, clock=time.monotonic):
+    def __init__(self, limits=None, *, clock=time.monotonic, max_directions=2):
         self.limits = limits or TrafficLimits()
         self.clock = clock
+        self.max_directions = max_directions
         self._directions = {}
         self._lock = threading.Lock()
 
@@ -43,9 +44,9 @@ class DirectionalTrafficGuard:
         with self._lock:
             now = self.clock()
             key = (source, target)
-            # The configured bridge has exactly two directions. Do not let
+            # A bridge of N radios has N*(N-1) directions. Do not let
             # malformed metadata grow an unbounded metrics or token table.
-            if key not in self._directions and len(self._directions) >= 2:
+            if key not in self._directions and len(self._directions) >= self.max_directions:
                 return "Bridge direction unavailable"
             state = self._directions.setdefault(
                 key,

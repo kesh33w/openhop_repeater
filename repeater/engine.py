@@ -266,8 +266,10 @@ class RepeaterHandler(BaseHandler):
         self.bridge_evidence = ReceptionEvidence(
             self.channel_bridge.evidence_settings if self.channel_bridge else None
         )
+        bridge_ids = len(self.channel_bridge.radio_ids) if self.channel_bridge else 2
         self.bridge_traffic = DirectionalTrafficGuard(
-            self.channel_bridge.traffic_limits if self.channel_bridge else None
+            self.channel_bridge.traffic_limits if self.channel_bridge else None,
+            max_directions=bridge_ids * (bridge_ids - 1),
         )
         self.bridge_echoes = (
             AsyncEchoLedger(
@@ -3325,11 +3327,12 @@ class RepeaterHandler(BaseHandler):
     def _resolve_relay_tx_radio_ids(self, rx_radio_id: Optional[str]) -> Optional[Tuple[str, ...]]:
         """Egress radios for a packet heard on ``rx_radio_id`` and being repeated.
 
-        Applies only when fabric.tx_mode=bridge and exactly two radios are
-        registered: the bridge target (the other radio) comes first, followed by
-        the ingress radio itself when fabric.repeat_on_ingress is true. For all
-        other layouts return None and let the dispatcher/fabric choose via
-        existing logic.
+        With fabric.topology the topology decides (see its relay_destinations).
+        Without one, applies only when fabric.tx_mode=bridge and exactly two
+        radios are registered: the bridge target (the other radio) comes first,
+        followed by the ingress radio itself when fabric.repeat_on_ingress is
+        true. For all other layouts return None and let the dispatcher/fabric
+        choose via existing logic.
         """
         topology = getattr(self, "network_topology", None)
         if topology and rx_radio_id:

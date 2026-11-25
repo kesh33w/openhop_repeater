@@ -274,7 +274,20 @@ class EchoLedger:
         )
 
     def reserve(self, source, outgoing, *, separate_source=False):
-        hashes = sorted({self.digest(source), self.digest(outgoing)})
+        """Reserve one crossing of ``source`` as ``outgoing``; None if refused.
+
+        With more than two networks one source packet crosses once per target
+        network, so a source hash already reserved *only as a source* does not
+        block another crossing. Any other existing reservation of either hash
+        (an outgoing copy, or a legacy row without a role) still does.
+
+        With ``separate_source`` the source is recorded as ``source`` and
+        received-only lookups ignore it. Without it the source is recorded as
+        ``source_echo``: it still counts as a received echo, as before, and only
+        the fan-out check above reads the role.
+        """
+        target = self.digest(outgoing)
+        hashes = sorted({self.digest(source), target})
         token = hashlib.sha256("|".join(hashes).encode()).hexdigest()
         now = self.clock()
         with self.db:
@@ -283,11 +296,22 @@ class EchoLedger:
             self.db.execute(
                 "DELETE FROM echo_roles WHERE NOT EXISTS (SELECT 1 FROM echoes e WHERE e.token=echo_roles.token AND e.hash=echo_roles.hash AND e.expires=echo_roles.expires)"
             )
-            if any(
-                self.db.execute("SELECT 1 FROM echoes WHERE hash=?", (h,)).fetchone()
-                for h in hashes
-            ):
-                return None
+            for h in hashes:
+                if h == target:
+                    blocked = self.db.execute(
+                        "SELECT 1 FROM echoes WHERE hash=? LIMIT 1", (h,)
+                    ).fetchone()
+                else:
+                    blocked = self.db.execute(
+                        "SELECT 1 FROM echoes e LEFT JOIN echo_roles r "
+                        "ON e.token=r.token AND e.hash=r.hash AND e.expires=r.expires "
+                        "WHERE e.hash=? AND (e.token=? OR r.role IS NULL "
+                        "OR r.role NOT IN ('source', 'source_echo')) "
+                        "LIMIT 1",
+                        (h, token),
+                    ).fetchone()
+                if blocked:
+                    return None
             count = self.db.execute("SELECT count(*) FROM echoes").fetchone()[0]
             if count + len(hashes) > self.capacity:
                 return None
@@ -295,15 +319,14 @@ class EchoLedger:
                 "INSERT INTO echoes VALUES (?, ?, ?, 'pending')",
                 [(token, h, now + self.ttl) for h in hashes],
             )
-            if separate_source:
-                target = self.digest(outgoing)
-                self.db.executemany(
-                    "INSERT OR REPLACE INTO echo_roles VALUES (?, ?, ?, ?)",
-                    [
-                        (token, h, now + self.ttl, "target" if h == target else "source")
-                        for h in hashes
-                    ],
-                )
+            source_role = "source" if separate_source else "source_echo"
+            self.db.executemany(
+                "INSERT OR REPLACE INTO echo_roles VALUES (?, ?, ?, ?)",
+                [
+                    (token, h, now + self.ttl, "target" if h == target else source_role)
+                    for h in hashes
+                ],
+            )
         return token
 
     def finish(self, token, *, success):
@@ -502,8 +525,8 @@ class BridgeSettings:
         from repeater.network_topology import bridge_radio_ids
 
         ids = bridge_radio_ids(config)
-        if len(ids) != 2:
-            raise ValueError("channel_bridge requires exactly two distinct named radios")
+        if len(ids) < 2 or len(set(ids)) != len(ids):
+            raise ValueError("channel_bridge requires two or more distinct named radios")
         self.radio_ids = tuple(ids)
         self.origin_home = cfg.get("origin_home")
         if self.origin_home is not None and self.origin_home not in ids:

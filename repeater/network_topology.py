@@ -51,8 +51,9 @@ def topology_from_config(config):
         if network in settings and settings[network] != signature:
             raise ValueError("Radios on one logical network must have matching air settings")
         settings[network] = signature
-    if settings[next(iter(settings))][0] == settings[next(reversed(settings))][0]:
-        raise ValueError("The two logical networks must have distinct frequencies")
+    frequencies = [signature[0] for signature in settings.values()]
+    if len(set(frequencies)) != len(frequencies):
+        raise ValueError("Each logical network must have its own frequency")
     return topology
 
 

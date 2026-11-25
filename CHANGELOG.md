@@ -4,6 +4,16 @@ Fork-specific changes to OpenHop Repeater. Upstream changes are in upstream's hi
 
 ## [Unreleased]
 
+## [1.9.0] - 2026-11-25
+
+### Added
+
+- **The bridge can join more than two networks.** `fabric.topology.networks` may name three or more networks, each with its own TX radio and frequency (for example Sac 909, Bay 910 and a remote SoCal 927 G3 reached over `modem_tcp`). Channel-bridge `mappings` still decide what crosses, per source and target radio, so nothing new crosses until it is mapped. Flood limits (`traffic_limits`) apply per direction, N×(N−1) directions in all. Needs core 5550cf9 (pinned). Two-network setups behave as before.
+
+### Fixed
+
+- **A channel mapped to two other networks now reaches both.** The echo ledger refused the second translated copy of one source packet ("Bridge duplicate or ledger full"), because the source was already reserved by the first crossing. A source may now cross once to each target network; repeats of the same crossing, our own sent copies heard back, and reservations written by older releases are still refused. Only possible with three or more networks.
+
 ## [1.8.1] - 2026-11-24
 
 ### Fixed

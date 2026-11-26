@@ -279,6 +279,11 @@ class _BrokerConnection:
         # below for the same hazard. This is the openhop equivalent of the
         # firmware's packets-only MeshRank exclusion.
         self.neighbors_enabled = bool(broker.get("neighbors", False))
+        # Opt-in per broker, default off: also publish this node's own successful
+        # transmissions, as direction "tx" from the radio that sent them. Consumers
+        # that understand MC2MQTT direction (CoreScope #667) keep them out of
+        # reception statistics; a consumer that ignores it would not.
+        self.publish_tx = broker.get("publish_tx") is True
         # Payload bytes paho accepted since the service started; topic, protocol overhead,
         # keepalives and resends are not counted. Callers of publish() hold the pusher's _lock.
         self._sent_lock = threading.Lock()
@@ -1256,6 +1261,8 @@ class MeshCoreToMqttPusher:
     @staticmethod
     def _payload_for_connection(conn, subtopic: str, payload: dict):
         """Project a radio-specific feed without treating egress as reception."""
+        if payload.get("direction") == "tx" and subtopic in ("packets", "packet", "raw"):
+            return MeshCoreToMqttPusher._tx_payload_for_connection(conn, payload)
         logical = payload.get("logical_observer_id")
         members = getattr(conn, "logical_observer_members", ())
         if logical is not None:
@@ -1342,6 +1349,32 @@ class MeshCoreToMqttPusher:
         # Diagnostic records already carrying a radio may use the same feed.
         # Unattributed node-wide data cannot describe one band accurately.
         return payload if payload.get("radio_id") == conn.radio_id else None
+
+    @staticmethod
+    def _tx_payload_for_connection(conn, payload: dict):
+        """Route one of this node's own transmissions to the feed of the radio that sent it.
+
+        Only brokers with ``publish_tx`` receive it. A radio-specific feed takes
+        sends from its own radio, or from any member of its logical observer (a
+        TX-group leg on a second radio of the same network). A node-wide feed
+        takes every send.
+        """
+        if not getattr(conn, "publish_tx", False):
+            return None
+        sender = payload.get("tx_radio_id")
+        if not conn.radio_id:
+            return payload
+        members = getattr(conn, "logical_observer_members", ()) or (conn.radio_id,)
+        if sender not in members:
+            return None
+        projected = {**payload, "observer_radio_id": conn.radio_id}
+        if getattr(conn, "observer_identity", False):
+            projected.update(origin_id=conn.public_key, origin=conn.node_name)
+        return projected
+
+    def has_tx_brokers(self) -> bool:
+        """True when an enabled broker opted into this node's own transmissions."""
+        return any(conn.enabled and getattr(conn, "publish_tx", False) for conn in self.connections)
 
     def publish(self, subtopic: str, payload: dict, retain: bool = False, qos: int = 0):
         """Publish message to all connected brokers"""

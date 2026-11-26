@@ -3617,6 +3617,11 @@ class APIEndpoints:
                     for existing in (self.config.get("mqtt_brokers", {}) or {}).get("brokers", [])
                     if isinstance(existing, dict) and existing.get("name")
                 }
+                stored_publish_tx_by_name = {
+                    str(existing.get("name")): existing.get("publish_tx") is True
+                    for existing in (self.config.get("mqtt_brokers", {}) or {}).get("brokers", [])
+                    if isinstance(existing, dict) and existing.get("name")
+                }
                 # A name two brokers share maps to None, so neither gets the other's.
                 stored_passwords_by_name = {}
                 for existing in (self.config.get("mqtt_brokers", {}) or {}).get("brokers", []):
@@ -3675,6 +3680,15 @@ class APIEndpoints:
                             b["neighbors"]
                             if "neighbors" in b
                             else stored_neighbors_by_name.get(str(b["name"]).strip(), False)
+                        ),
+                        # Opt-in per broker (config file only for now); keep the
+                        # stored value when the web form does not send it.
+                        "publish_tx": bool(
+                            b["publish_tx"]
+                            if "publish_tx" in b
+                            else stored_publish_tx_by_name.get(
+                                str(b.get("previous_name") or b["name"]).strip(), False
+                            )
                         ),
                         "tls": {
                             "enabled": bool(

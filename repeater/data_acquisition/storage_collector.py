@@ -425,6 +425,40 @@ class StorageCollector:
             self.rrd_handler.update_packet_metrics(packet_record, cumulative_counts)
 
         self._publish_packet_sync(packet_record, skip_mqtt)
+        if not skip_mqtt and tx_egress:
+            self._publish_own_tx_to_mqtt(packet_record, tx_egress)
+
+    def _publish_own_tx_to_mqtt(self, packet_record: dict, tx_egress: list):
+        """Publish each successful physical send as an MC2MQTT ``direction: tx`` record.
+
+        One record per radio that sent the packet, carrying the exact bytes that
+        radio put on air (a bridged copy is translated and differs from what was
+        heard). There is no RF measurement for a send, so SNR, RSSI and score
+        are left out rather than published as 0, which consumers would read as
+        a 0 dBm direct reception. Only brokers with ``publish_tx`` take these;
+        a node with one radio keeps no per-radio egress rows and publishes none.
+        """
+        handler = self.mqtt_handler
+        if not handler or not getattr(handler, "has_tx_brokers", lambda: False)():
+            return
+        node_name = self.config.get("repeater", {}).get("node_name", "Unknown")
+        for row in tx_egress:
+            raw = row.get("raw_packet")
+            radio_id = row.get("radio_id")
+            if not row.get("success") or not raw or not radio_id:
+                continue
+            try:
+                record = PacketRecord.own_transmission(
+                    raw,
+                    radio_id,
+                    row.get("timestamp") or packet_record.get("timestamp") or time.time(),
+                    origin=node_name,
+                    origin_id=handler.public_key,
+                )
+                if record is not None:
+                    handler.publish_packet(record)
+            except Exception as e:
+                logger.error(f"Failed to publish own transmission to mqtt: {e}", exc_info=True)
 
     def _publish_packet_sync(self, packet_record: dict, skip_mqtt: bool):
         """Publish a single packet (glass, per-packet WebSocket event, MQTT).

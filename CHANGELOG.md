@@ -4,6 +4,12 @@ Fork-specific changes to OpenHop Repeater. Upstream changes are in upstream's hi
 
 ## [Unreleased]
 
+## [1.10.0] - 2026-11-26
+
+### Added
+
+- **Observers can publish the node's own transmissions.** A broker with `publish_tx: true` also receives every successful send (repeats, bridge crossings, adverts, companion traffic) as an MC2MQTT packet with `direction: "tx"`, one per radio that sent it, from that radio's observer feed and with the exact bytes sent. No SNR, RSSI, score or duration is published, so consumers that honour `direction` (CoreScope) never count it as a reception. Off by default; the web UI keeps the setting when brokers are saved.
+
 ## [1.9.0] - 2026-11-25
 
 ### Added

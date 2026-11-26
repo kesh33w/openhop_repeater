@@ -207,10 +207,13 @@ When a modem's channel-activity check fails or times out, the packet is still se
 |---|---|---|
 | Per-radio MQTT observer identities | `mqtt_brokers.separate_observer_identities`, `observer_identities` | [separate-observer-identities.md](../separate-observer-identities.md) |
 | One MQTT stream per network (logical receivers) | `mqtt_logical_observers` | [logical-receivers.md](../logical-receivers.md) |
+| Own transmissions on the observer feed | `mqtt_brokers.brokers[].publish_tx: true` (default off) | below |
 | Per-radio RF receive age | always on; `rf_receive_ages` in stats, shown on the dashboard | n/a |
 | Independent reception evidence | `channel_bridge.reception_evidence` | [bridge-reception-evidence.md](../bridge-reception-evidence.md) |
 | Bridge diagnostics | `GET /api/bridge_diagnostics` | [bridge-api.md](bridge-api.md#diagnostics) |
 | Transmit outcomes per leg | in packet egress records and stats | [ordered-dual-tx.md](../ordered-dual-tx.md) |
+
+With `publish_tx: true` a broker also gets each successful send of this node (repeats, bridged copies, adverts, companion traffic) as an MC2MQTT packet with `direction: "tx"`, from the feed of the radio that sent it (`tx_radio_id`), with the bytes that radio put on air. SNR, RSSI, score and duration are left out. CoreScope keeps `tx` observations out of coverage and signal statistics; check how other aggregators treat `direction` before turning it on for them. Needs two or more radios (per-radio egress records).
 
 MQTT credentials refresh before they expire, and connections retry after a failed first handshake, for every broker.
 

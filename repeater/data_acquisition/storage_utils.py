@@ -109,6 +109,45 @@ class PacketRecord:
         )
 
     @staticmethod
+    def own_transmission(
+        raw_hex: str, radio_id: str, timestamp: float, *, origin: str, origin_id: str
+    ) -> Optional[dict]:
+        """MC2MQTT record for one of this node's own sends on ``radio_id``.
+
+        Fields come from the bytes actually sent, not from the received packet:
+        a bridge crossing is re-encrypted for its target channel, so its length
+        and hash differ. SNR, RSSI, score and duration are omitted: nothing was
+        measured, and airtime depends on the sending radio's modulation.
+        """
+        from openhop_core.protocol.packet import Packet
+
+        packet = Packet()
+        try:
+            if not packet.read_from(bytes.fromhex(raw_hex)):
+                return None
+        except ValueError:  # malformed hex or wire format
+            return None
+        dt = datetime.fromtimestamp(timestamp, tz=timezone.utc)
+        route_type = packet.get_route_type()
+        return {
+            "origin": origin,
+            "origin_id": origin_id,
+            "timestamp": dt.isoformat(),
+            "type": "PACKET",
+            "direction": "tx",
+            "time": dt.strftime("%H:%M:%S"),
+            "date": dt.strftime("%-d/%-m/%Y"),
+            "len": str(len(raw_hex) // 2),
+            "packet_type": str(packet.get_payload_type()),
+            "route": {1: "F", 2: "D"}.get(route_type, str(route_type)),
+            "payload_len": str(len(packet.payload or b"")),
+            "raw": raw_hex,
+            "hash": packet.calculate_packet_hash().hex().upper()[:16],  # as rx records
+            "tx_radio_id": radio_id,
+            "tx_radio_ids": [radio_id],
+        }
+
+    @staticmethod
     def _tx_radio_ids(packet_record: dict) -> Optional[List[str]]:
         """Every radio that successfully transmitted this packet, or None.
 
